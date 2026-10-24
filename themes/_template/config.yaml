@@ -1,0 +1,61 @@
+# 主题运行配置模板（复制到主题目录后编辑；相对路径以运行时工作目录为准）
+# 运行: python -m litreview.cli screen --config themes/<你的主题>/config.yaml
+
+run:
+  mode: recall             # precision=构建数据集 | recall=系统综述（漏检代价高时用）
+  threads: 10
+  require_abstract: true   # 剔除缺摘要记录
+
+data:
+  inputs:
+    # OpenAlex（免费无 key）。filters 的日期区间会自动下推到 API
+    - type: openalex
+      query: "你的检索词"
+      max_records: 500
+      # mailto: "you@example.com"   # 填邮箱进入 faster pool
+    # 文件源（RIS / WoS 制表符导出 / CSV 自动识别），从 WoS/Scopus 导出后用：
+    # - type: file
+    #   path: data/my_export.ris
+    # Semantic Scholar（无 key 限速 100次/5分钟）：
+    # - type: semantic_scholar
+    #   query: "你的检索词"
+
+filters:                   # 可整体删除=不过滤；元数据未知的记录保留交 LLM 判据兜底
+  language: en             # 只留英语
+  date_from: "2000-01-01"  # ISO 日期或年份
+  date_to: "2026-09-30"
+  doctype_include: []      # 白名单（空=不启用）；注意启用后未知类型仍保留
+  doctype_exclude: [review, editorial, letter, meeting abstract, book chapter, news, correction]
+
+criteria:
+  pack: themes/<你的主题>/criteria.yaml
+  active: [C1, C2]        # 启用哪些判据（在判据包 id 范围内选子集）
+  inclusion_logic: all    # all=全部满足才纳入 | any=任一满足即纳入
+
+knowledge:
+  dir: themes/<你的主题>   # knowledge.md 所在目录（文件名不限，扫 *.md；无条目=关闭 RAG）
+  top_k: 4
+
+# 金标准 few-shot（可选）：人工标注累积后自动注入评审 prompt，与 evaluate 闭环
+# fewshot:
+#   labels: labels/my_topic_golden.csv
+#   traces: [output/trace_xxx.jsonl]   # 可选，提供示例的摘要文本
+#   k: 2
+
+agents:
+  reviewer_1:
+    provider: openai_compatible
+    model: 模型A
+    base_url: https://ark.cn-beijing.volces.com/api/coding/v3
+    api_key_env: ARK_API_KEY
+    structured: auto       # auto=优先JSON结构化输出，失败回退文本 | text=仅文本
+  reviewer_2:              # 置为 null 则退化为单评审（追踪模式可用）
+    provider: openai_compatible
+    model: 模型B
+    base_url: https://ark.cn-beijing.volces.com/api/coding/v3
+    api_key_env: ARK_API_KEY
+  arbiter:
+    provider: openai_compatible
+    model: 模型C
+    base_url: https://ark.cn-beijing.volces.com/api/coding/v3
+    api_key_env: ARK_API_KEY

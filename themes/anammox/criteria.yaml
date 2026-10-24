@@ -1,0 +1,116 @@
+# 厌氧氨氧化（anammox）脱氮废水处理研究筛选判据包
+#
+# 筛选目标：同时满足 A1-A5 —— 以厌氧氨氧化为核心研究对象、以脱氮为目标、
+# 面向废水处理场景、研究性论文、英语文献（2000-01-01 ~ 2026-09-30 由
+# config filters 做元数据预过滤，A5 为其 LLM 兜底）。
+# 组合逻辑 inclusion_logic: all（必须同时满足）。
+
+pack: anammox_nitrogen_removal
+domain: 污水生物处理与脱氮（环境工程）
+description: >
+  厌氧氨氧化（anaerobic ammonium oxidation, anammox）及以其为核心的脱氮工艺
+  应用于废水处理的研究性文献。含机理研究（菌种、活性、抑制）与工艺研究
+  （PN/A、CANON 等耦合工艺、反应器构型、 mainstream/侧流应用）。
+
+criteria:
+  - id: A1
+    name: 厌氧氨氧化核心
+    question: >
+      研究是否以厌氧氨氧化（anammox）过程本身或含 anammox 环节的工艺为
+      核心研究对象？
+    guidance: |
+      纳入：
+        - anammox / anaerobic ammonium oxidation / deammonification 直接研究
+        - 含 anammox 步骤的耦合工艺：partial nitritation-anammox (PN/A, CANON,
+          OLAND, DEMON, SNAP)、SNAD（短程硝化-anammox-反硝化）、
+          partial denitrification-anammox (PdN-A, deamox)、
+          PD-A / anammox 耦合厌氧消化等
+        - anammox 菌研究：Candidatus Brocadia / Kuenenia / Anammoxoglobus /
+          Jettenia / Scalindua 的富集、活性、生理、群落
+        - anammox 颗粒污泥、生物膜、载体（MBBR/IFAS）、厌氧氨氧化反应器构型
+        - anammox 菌利用其他电子受体的变异途径（如 NO3-→NO2- 内源反硝化供基质）
+      排除：
+        - 传统硝化-反硝化脱氮研究，全文无 anammox 环节
+        - anammox 仅出现在引言背景、综述性对比或未来展望中，研究对象与 anammox 无关
+        - 仅研究短程硝化（partial nitritation）供应 NO2- 的前置单元而系统不含
+          anammox 步骤
+        - 厌氧消化、产甲烷、厌氧氨氧化以外的厌氧工艺
+      边界：
+        - 短程硝化的目的是为 anammox 供基质（一体化/两段式系统的一部分）→ Yes
+        - 研究对象是城市污水厂全局模型，anammox 仅作为其中一个单元选项出现
+          且有针对 anammox 的分析 → Yes；完全未展开 → No
+        - 拿不准时回答 No 并在理由中说明
+
+  - id: A2
+    name: 脱氮目标
+    question: 研究是否以氮去除（nitrogen removal/recovery）为核心目标或核心指标之一？
+    guidance: |
+      纳入：
+        - 指标含 TN / NH4+-N / NH3-N 去除率、NRE（nitrogen removal efficiency）、
+          NLR/NRR（氮负荷/氮去除速率）、SAA（比厌氧氨氧化活性）、
+          anammox 速率、N2 产率、氮素转化的物料衡算
+        - anammox 菌富集/保种/活性维持研究（以氮转化速率为核心测量）
+        - 脱氮同时除其他污染物（如 COD、P、微污染物），氮去除为主要目标之一
+      排除：
+        - 研究目标为去除其他污染物（磷、重金属、药物、COD 为主），氮浓度
+          变化仅为附带监测参数、未作分析对象
+        - 仅测定 anammox 菌的非氮代谢（如胞外聚合物 EPS 理化性质）且不涉及
+          氮转化性能
+      边界：
+        - 氮回收（如以鸟粪石等形式的回收研究）中 anammox 是氮转化的组成 → Yes
+        - 微生物群落结构研究中氮去除性能作为关联指标有明确数据 → Yes；
+          仅 16S 测序描述菌群、无氮转化数据 → No
+        - 拿不准时回答 No 并在理由中说明
+
+  - id: A3
+    name: 废水处理场景
+    question: 研究是否面向废水（wastewater）处理或废水衍生基质？
+    guidance: |
+      纳入（真实与合成基质均算）：
+        - 城市污水：主流（mainstream，低氨氮）与侧流/旁路（sidestream）
+        - 污泥消化液/脱水滤液（reject water / centrate / digester supernatant）、
+          垃圾渗滤液（landfill leachate）
+        - 工业废水：焦化、制药/抗生素、养殖/畜牧、味精/淀粉、半导体等含氮废水
+        - 合成废水 / 模拟基质（synthetic medium/wastewater）的基础研究
+        - 黄水（source-separated urine）、厌氧消化出水中段水
+      排除：
+        - 饮用水处理
+        - 天然水体/海洋/土壤环境中的 anammox 生态研究（如海洋 Scalindua、
+          沉积物氮循环），无废水处理语境
+        - 大气、固废（非废水液相）研究
+      边界：
+        - 污泥处理与 anammox 联用（如消化+anammox 侧流回脱氮）→ Yes
+        - 中试（pilot）、生产性（full-scale）与实验室小试（bench）均算
+        - 仅以"水体修复/受污染地表水修复"为目标且对象为天然水体 → No
+        - 拿不准时回答 No 并在理由中说明
+
+  - id: A4
+    name: 研究类型
+    question: 是否为提供原始数据的研究性论文（非综述/评论/会议摘要）？
+    guidance: |
+      纳入：
+        - 实验研究（批次/连续流反应器、中试、生产性工程报告含运行数据）
+        - 建模与模拟研究（动力学模型、CFD、机器学习预测、生命周期评价中
+          含 anammox 工艺的原创建模）——本主题口径下纯建模也算研究性论文
+        - 方法论文（新型测定/监测方法在 anammox 体系的应用验证）
+      排除：
+        - 综述（review / systematic review / meta-analysis / critical review）
+        - 评论（comment）、观点（perspective）、社论（editorial）、通讯社论
+        - 书章（book chapter）、会议摘要（conference abstract，无数据正文）
+        - 研究简报/新闻、更正（erratum/correction）
+      边界：
+        - 含少量原创数据但主体为文献汇总的 "mini-review" → No
+        - 会议全文论文（proceedings paper）含完整数据 → Yes
+        - 学位论文若被数据库收录为 article 形态且有数据 → 按摘要判断，通常 Yes
+
+  - id: A5
+    name: 语种
+    question: 该文献的发表语种是否为英语？
+    guidance: |
+      判定依据：标题与摘要的语种（正常情况下与全文语种一致）。
+      纳入：标题与摘要均为英语。
+      排除：标题或摘要明显为其他语言（德/法/中/日/韩/俄等）。
+      边界：
+        - 英语题录但出处为明显非英语期刊（刊名含国家语言特征）→ No
+        - 元数据过滤（filters.language）已剔除大部分非英语件；本判据是
+          元数据缺失时的兜底，正常情况下应答 Yes

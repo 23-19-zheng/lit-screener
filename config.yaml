@@ -1,0 +1,50 @@
+# lit-screener 运行配置
+# 复制为 config.yaml 后按需修改。所有路径相对于运行时的工作目录。
+
+run:
+  mode: precision            # precision=构建数据集 | recall=系统综述
+  threads: 10                # 并发评审线程数
+  require_abstract: true     # 剔除缺摘要的记录（原论文做法；false=保留并标记）
+
+data:
+  inputs:
+    # 文件源：自动识别 RIS / WoS 制表符导出 / CSV
+    - type: file
+      path: data/sample_records.ris
+    # ---- OpenAlex（免费无需 key）----
+    # - type: openalex
+    #   query: "rare earth recovery recycling"
+    #   from_year: 2000
+    #   max_records: 500
+    #   mailto: "you@example.com"        # 填邮箱可进入 faster pool
+    # ---- Semantic Scholar（无 key 限速）----
+    # - type: semantic_scholar
+    #   query: "rare earth element recovery"
+    #   from_year: 2000
+    #   max_records: 500
+
+criteria:
+  pack: criteria/rare_earth.yaml   # 判据包文件
+  active: [T1, T2, T3]             # 本次启用哪些判据（按需选择子集）
+  inclusion_logic: all             # all=全部满足才纳入 | any=任一满足即纳入
+
+knowledge:
+  dir: knowledge                   # 知识条目目录（.md，## 标题分条）
+  top_k: 4                         # 每篇注入的检索条目数
+
+agents:
+  reviewer_1:
+    provider: openai_compatible
+    model: deepseek-v4.1-flash
+    base_url: https://ark.cn-beijing.volces.com/api/coding/v3
+    api_key_env: ARK_API_KEY
+  reviewer_2:                      # 置为 null 则退化为单评审（追踪模式可用）
+    provider: openai_compatible
+    model: glm-5.3-flash
+    base_url: https://ark.cn-beijing.volces.com/api/coding/v3
+    api_key_env: ARK_API_KEY
+  arbiter:
+    provider: openai_compatible
+    model: glm-5.3-flashx
+    base_url: https://ark.cn-beijing.volces.com/api/coding/v3
+    api_key_env: ARK_API_KEY

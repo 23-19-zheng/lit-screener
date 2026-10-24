@@ -1,0 +1,61 @@
+# 厌氧氨氧化主题运行配置（即拷即用；路径以仓库根目录为运行时工作目录）
+# 运行: python -m litreview.cli screen --config themes/anammox/config.yaml
+
+run:
+  mode: recall             # 系统综述场景，漏检代价高：排除需评审一致/仲裁确认，边界件进人工清单
+  threads: 10
+  require_abstract: true
+
+data:
+  inputs:
+    # OpenAlex；filters 的日期区间自动下推到 API。
+    # 注意：cursor 翻页（>200 条）需免费 API key（openalex.org/settings/api 注册即得），
+    # 无 key 时自动只取第一页 ≤200 条。环境变量方式：api_key_env: OPENALEX_API_KEY
+    - type: openalex
+      query: "anaerobic ammonium oxidation"
+      max_records: 500
+      api_key_env: OPENALEX_API_KEY   # 可选；或直接 api_key: "明文"
+      # mailto: "you@example.com"     # 填邮箱进入 faster pool
+    # WoS/Scopus 导出文件（RIS/制表符/CSV 自动识别），语种/类型/日期列会被解析：
+    # - type: file
+    #   path: data/anammox_wos.ris
+
+filters:                   # 元数据硬过滤（确定性，不花 LLM 调用）；元数据缺失件保留交 A5 等判据兜底
+  language: en             # 只留英语
+  date_from: "2000-01-01"  # 2000-01-01 ~ 2026-09-30
+  date_to: "2026-09-30"
+  doctype_include: []
+  doctype_exclude: [review, editorial, letter, meeting abstract, book chapter, news, correction, erratum]
+
+criteria:
+  pack: themes/anammox/criteria.yaml
+  active: [A1, A2, A3, A4, A5]   # 五条全部启用，inclusion_logic=all：同时满足才纳入
+  inclusion_logic: all
+
+knowledge:
+  dir: themes/anammox      # knowledge.md 所在目录
+  top_k: 4
+
+# 人工标注 30~100 篇后打开（与 evaluate 闭环，标注自动注入为评审参考案例）：
+# fewshot:
+#   labels: labels/anammox_golden.csv
+#   traces: [output/trace_xxx.jsonl]
+#   k: 2
+
+agents:
+  reviewer_1:
+    provider: openai_compatible
+    model: deepseek-v4.1-flash
+    base_url: https://ark.cn-beijing.volces.com/api/coding/v3
+    api_key_env: ARK_API_KEY
+    structured: auto       # 优先 JSON 结构化输出，端点不支持时自动回退文本
+  reviewer_2:
+    provider: openai_compatible
+    model: glm-5.3-flash
+    base_url: https://ark.cn-beijing.volces.com/api/coding/v3
+    api_key_env: ARK_API_KEY
+  arbiter:
+    provider: openai_compatible
+    model: glm-5.3-flashx
+    base_url: https://ark.cn-beijing.volces.com/api/coding/v3
+    api_key_env: ARK_API_KEY
