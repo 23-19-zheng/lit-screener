@@ -1,0 +1,48 @@
+# 厌氧氨氧化主题 —— 本地 xlsx 导出数据（998 条：标题/摘要/出版年份）筛选配置
+# 数据由 /Users/zc/Desktop/998.xlsx 转换而来：data/998.csv
+# 运行: python -m litreview.cli screen --config themes/anammox/config_998.yaml
+# 注意：必须在仓库根目录运行。
+
+run:
+  mode: recall             # 系统综述口径：排除需评审一致/仲裁确认，边界件进人工清单
+  threads: 10
+  require_abstract: true   # 998 条全部有摘要，不受影响
+
+data:
+  inputs:
+    - type: file           # CSV 自动识别；列为 WoS 标准列名（Article Title/Abstract/Publication Year）
+      path: data/998.csv
+
+filters:
+  language: en             # 本表无语种列 → 此项空转；非英语件由判据 A5 的 LLM 兜底剔除
+  date_from: "2000-01-01"  # 本表无日期列，按 Publication Year 全年判定（2001-2025 全在区间内）
+  date_to: "2026-09-30"
+  doctype_include: []      # 本表无文献类型列 → 此项空转；综述/评论等由判据 A4 的 LLM 兜底剔除
+  doctype_exclude: [review, editorial, letter, meeting abstract, book chapter, news, correction, erratum]
+
+criteria:
+  pack: themes/anammox/criteria.yaml
+  active: [A1, A2, A3, A4, A5]   # A1 厌氧氨氧化核心 + A2 脱氮 + A3 废水 + A4 研究性论文 + A5 英语，全部满足才纳入
+  inclusion_logic: all
+
+knowledge:
+  dir: themes/anammox
+  top_k: 4
+
+agents:
+  reviewer_1:
+    provider: openai_compatible
+    model: deepseek-v4.1-flash
+    base_url: https://ark.cn-beijing.volces.com/api/coding/v3
+    api_key_env: ARK_API_KEY
+    structured: auto
+  reviewer_2:
+    provider: openai_compatible
+    model: glm-5.3-flash
+    base_url: https://ark.cn-beijing.volces.com/api/coding/v3
+    api_key_env: ARK_API_KEY
+  arbiter:
+    provider: openai_compatible
+    model: glm-5.3-flashx
+    base_url: https://ark.cn-beijing.volces.com/api/coding/v3
+    api_key_env: ARK_API_KEY

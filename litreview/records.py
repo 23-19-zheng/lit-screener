@@ -173,32 +173,32 @@ def _load_tabular(path: str, delimiter: str) -> list[Record]:
     with open(path, "r", encoding="utf-8-sig", errors="replace") as f:
         reader = csv.DictReader(f, delimiter=delimiter)
         cols = reader.fieldnames or []
-    ct = _pick(cols, _WOS_COLS["title"])
-    ca = _pick(cols, _WOS_COLS["abstract"])
-    cu = _pick(cols, _WOS_COLS["authors"])
-    cy = _pick(cols, _WOS_COLS["year"])
-    cd = _pick(cols, _WOS_COLS["doi"])
-    clang = _pick(cols, _WOS_COLS["language"])
-    ctype = _pick(cols, _WOS_COLS["doctype"])
-    cdate = _pick(cols, _WOS_COLS["date"])
-    if not ct:
-        raise ValueError(f"文件 {path} 中找不到标题列，现有列: {cols}")
-    for i, row in enumerate(reader, 1):
-        if not (row.get(ct) or "").strip():
-            continue
-        year = str(row.get(cy) or "").strip() if cy else ""
-        records.append(Record(
-            id=f"row-{i}",
-            title=(row.get(ct) or "").strip(),
-            abstract=(row.get(ca) or "").strip() if ca else "",
-            authors=(row.get(cu) or "").strip() if cu else "",
-            year=year,
-            doi=(row.get(cd) or "").strip() if cd else "",
-            source="file",
-            language=norm_language((row.get(clang) or "")) if clang else "",
-            doctype=(row.get(ctype) or "").strip() if ctype else "",
-            date=_norm_date((row.get(cdate) or ""), year) if cdate else year,
-        ))
+        ct = _pick(cols, _WOS_COLS["title"])
+        ca = _pick(cols, _WOS_COLS["abstract"])
+        cu = _pick(cols, _WOS_COLS["authors"])
+        cy = _pick(cols, _WOS_COLS["year"])
+        cd = _pick(cols, _WOS_COLS["doi"])
+        clang = _pick(cols, _WOS_COLS["language"])
+        ctype = _pick(cols, _WOS_COLS["doctype"])
+        cdate = _pick(cols, _WOS_COLS["date"])
+        if not ct:
+            raise ValueError(f"文件 {path} 中找不到标题列，现有列: {cols}")
+        for i, row in enumerate(reader, 1):
+            if not (row.get(ct) or "").strip():
+                continue
+            year = str(row.get(cy) or "").strip() if cy else ""
+            records.append(Record(
+                id=f"row-{i}",
+                title=(row.get(ct) or "").strip(),
+                abstract=(row.get(ca) or "").strip() if ca else "",
+                authors=(row.get(cu) or "").strip() if cu else "",
+                year=year,
+                doi=(row.get(cd) or "").strip() if cd else "",
+                source="file",
+                language=norm_language((row.get(clang) or "")) if clang else "",
+                doctype=(row.get(ctype) or "").strip() if ctype else "",
+                date=_norm_date((row.get(cdate) or ""), year) if cdate else year,
+            ))
     return records
 
 

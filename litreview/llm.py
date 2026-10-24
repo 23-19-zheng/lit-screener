@@ -19,7 +19,7 @@ class LLMClient:
 
     def __init__(self, spec: dict):
         self.provider = spec["provider"]
-        self.model = spec["model"]git init
+        self.model = spec["model"]
         self.base_url = spec.get("base_url")
         key = os.environ.get(spec.get("api_key_env", ""), "")
         if not key:
