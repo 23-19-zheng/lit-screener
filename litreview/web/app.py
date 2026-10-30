@@ -304,6 +304,25 @@ async def evaluate_task(tid: str, labels: UploadFile = File(...)):
         raise HTTPException(400, str(e)) from e
 
 
+@app.get("/api/draft")
+def get_draft():
+    return store.get_draft() or {}
+
+
+@app.post("/api/draft")
+def save_draft(payload: TaskRequest):
+    if not store.get_dataset(payload.dataset_id, include_records=False):
+        raise HTTPException(400, "数据集不存在")
+    from ..batch import criteria_from_dict
+    try:
+        criteria_from_dict(payload.config.get("criteria") or {})
+    except (KeyError, TypeError, ValueError) as e:
+        raise HTTPException(400, f"筛选判据无效：{e}") from e
+    # 草稿不创建任务、不实例化模型，也不要求此时已配置密钥。
+    store.save_draft(payload.name, payload.dataset_id, payload.config, payload.knowledge)
+    return {"ok": True}
+
+
 @app.get("/api/presets")
 def presets():
     return store.list_presets()

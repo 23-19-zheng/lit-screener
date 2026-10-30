@@ -16,14 +16,14 @@
   <div class="sidebar-bottom"><div class="status-dot"></div>本地工作区<small>数据保存在本机 · 单用户</small></div>
 </aside>
 <main>
-  <header><div><p class="eyebrow">RESEARCH, WITH EVIDENCE</p><h1 id="page-title">筛选工作台</h1></div><div class="header-meta"><span class="local-badge">本地运行</span><button id="help-btn" class="icon-btn" title="使用说明">?</button></div></header>
+  <header><div><p class="eyebrow">RESEARCH, WITH EVIDENCE</p><h1 id="page-title">筛选工作台</h1></div><div class="header-meta"><span class="local-badge">本地运行</span><button id="resume-draft" class="secondary hidden">继续上次配置</button><button id="help-btn" class="icon-btn" title="使用说明">?</button></div></header>
   <div id="notice" class="notice hidden"></div>
 
   <section id="view-workspace" class="view">
     <div class="stepper"><div class="step active" data-step="1"><b>1</b><span>数据集<small>上传完整题录</small></span></div><i></i><div class="step" data-step="2"><b>2</b><span>筛选配置<small>判据、模型与知识</small></span></div><i></i><div class="step" data-step="3"><b>3</b><span>启动任务<small>检查并运行</small></span></div></div>
 
     <section id="step-1" class="step-panel">
-      <div class="section-heading"><div><h2>选择你的文献数据集</h2><p>一次选择一个文件或同格式的多个分卷，系统自动合并、去重并生成预览。</p></div><span class="tag">RIS · WoS TXT · CSV</span></div>
+      <div class="section-heading"><div><h2>选择你的文献数据集</h2><p>一次选择一个文件或同格式的多个分卷，系统自动合并、去重并生成预览。</p></div><div><span class="tag">RIS · WoS TXT · CSV</span><select id="dataset-list" style="width:auto;margin-left:12px;padding:5px;max-width:310px"><option value="">选择已上传的数据集</option></select></div></div>
       <label id="dropzone" class="dropzone"><input id="file-input" type="file" multiple accept=".ris,.txt,.csv"><span class="upload-symbol">↑</span><strong>拖入文件，或点击选择</strong><span>同一批 RIS / TXT 分卷可一次全选 · 总大小不超过 200 MB</span></label>
       <div id="upload-list" class="upload-list"></div>
       <div id="dataset-summary" class="hidden">
@@ -37,7 +37,7 @@
       <div id="criteria-step">
       <div class="config-grid">
         <div>
-          <div class="panel"><div class="panel-title"><h3>筛选判据</h3><div><button id="import-criteria" class="text-btn">导入 YAML</button><button id="save-preset" class="text-btn">保存方案</button><select id="preset-list" style="width:auto;padding:4px"><option value="">已存方案</option></select></div></div>
+          <div class="panel"><div class="panel-title"><h3>筛选判据</h3><div><button id="import-criteria" class="text-btn">导入 YAML</button><button id="save-draft" class="text-btn">保存待运行配置</button><button id="save-preset" class="text-btn">保存方案</button><select id="preset-list" style="width:auto;padding:4px"><option value="">已存方案</option></select></div></div>
             <input id="criteria-file" type="file" accept=".yaml,.yml" class="hidden">
             <div class="form-row"><label>研究领域<input id="domain" placeholder="例如：稀土冶金与材料"></label><label>判据组合<select id="logic"><option value="all">全部满足（all）</option><option value="any">任一满足（any）</option></select></label></div>
             <div id="criteria-list"></div><button id="add-criterion" class="secondary full">＋ 添加判据</button>
@@ -69,5 +69,5 @@
 </main>
 <dialog id="detail-dialog"><div class="dialog-header"><div><p class="eyebrow">RUN DETAILS</p><h2 id="detail-title"></h2></div><button class="icon-btn close-dialog">×</button></div><div id="detail-content"></div></dialog>
 <dialog id="help-dialog"><div class="dialog-header"><h2>快速使用</h2><button class="icon-btn close-dialog">×</button></div><ol class="help-list"><li><b>上传题录</b><p>可全选同格式的多个分卷；不要把相同文献的 RIS 和 TXT 同时上传。</p></li><li><b>写清判据</b><p>每条判据分别描述问题、纳入、排除和边界，判据组合决定整体结论。</p></li><li><b>先 Mock，后小样本</b><p>Mock 仅用于验证流程，不是真实筛选。真实模型在 .env 中配置密钥，页面不保存密钥。</p></li><li><b>全量运行与导出</b><p>评审员独立并行评审，完成后统一仲裁；可导出纳入文献和完整审计记录。</p></li></ol></dialog>
-<script src="/app.js"></script>
+<script src="/app.js?v=0.2.2"></script>
 </body></html>

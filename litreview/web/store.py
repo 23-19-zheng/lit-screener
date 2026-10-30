@@ -55,6 +55,10 @@ class Store:
                 CREATE TABLE IF NOT EXISTS criteria_presets (
                     id TEXT PRIMARY KEY, name TEXT NOT NULL, content TEXT NOT NULL,
                     updated_at TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS drafts (
+                    id INTEGER PRIMARY KEY CHECK(id=1), name TEXT NOT NULL,
+                    dataset_id TEXT NOT NULL, config TEXT NOT NULL, knowledge TEXT NOT NULL,
+                    updated_at TEXT NOT NULL);
             """)
 
     def connect(self):
@@ -193,6 +197,20 @@ class Store:
         with self.connect() as db:
             db.execute("DELETE FROM chunks WHERE task_id=? AND status!='done'", (tid,))
             db.execute("DELETE FROM results WHERE task_id=?", (tid,))
+
+    def save_draft(self, name: str, dataset_id: str, config: dict, knowledge: str):
+        with self.connect() as db:
+            db.execute("INSERT OR REPLACE INTO drafts VALUES (1,?,?,?,?,?)",
+                       (name, dataset_id, self._json(config), knowledge, now()))
+
+    def get_draft(self) -> dict | None:
+        with self.connect() as db:
+            row = db.execute("SELECT * FROM drafts WHERE id=1").fetchone()
+        if not row:
+            return None
+        data = dict(row)
+        data["config"] = json.loads(data["config"])
+        return data
 
     def save_preset(self, name: str, content: dict, preset_id: str | None = None) -> str:
         pid = preset_id or new_id("preset")
