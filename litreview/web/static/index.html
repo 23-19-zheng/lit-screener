@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Lit Screener · 文献筛选工作台</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<aside class="sidebar">
+  <div class="brand"><span class="brand-mark">L/</span><div>LIT SCREENER<small>文献筛选工作台</small></div></div>
+  <nav>
+    <button class="nav active" data-view="workspace"><span>01</span>筛选工作台</button>
+    <button class="nav" data-view="tasks"><span>02</span>任务与结果<i id="task-count"></i></button>
+    <button class="nav" data-view="compare"><span>03</span>配置对比</button>
+  </nav>
+  <div class="sidebar-bottom"><div class="status-dot"></div>本地工作区<small>数据保存在本机 · 单用户</small></div>
+</aside>
+<main>
+  <header><div><p class="eyebrow">RESEARCH, WITH EVIDENCE</p><h1 id="page-title">筛选工作台</h1></div><div class="header-meta"><span class="local-badge">本地运行</span><button id="help-btn" class="icon-btn" title="使用说明">?</button></div></header>
+  <div id="notice" class="notice hidden"></div>
+
+  <section id="view-workspace" class="view">
+    <div class="stepper"><div class="step active" data-step="1"><b>1</b><span>数据集<small>上传完整题录</small></span></div><i></i><div class="step" data-step="2"><b>2</b><span>筛选配置<small>判据、模型与知识</small></span></div><i></i><div class="step" data-step="3"><b>3</b><span>启动任务<small>检查并运行</small></span></div></div>
+
+    <section id="step-1" class="step-panel">
+      <div class="section-heading"><div><h2>选择你的文献数据集</h2><p>一次选择一个文件或同格式的多个分卷，系统自动合并、去重并生成预览。</p></div><span class="tag">RIS · WoS TXT · CSV</span></div>
+      <label id="dropzone" class="dropzone"><input id="file-input" type="file" multiple accept=".ris,.txt,.csv"><span class="upload-symbol">↑</span><strong>拖入文件，或点击选择</strong><span>同一批 RIS / TXT 分卷可一次全选 · 总大小不超过 200 MB</span></label>
+      <div id="upload-list" class="upload-list"></div>
+      <div id="dataset-summary" class="hidden">
+        <div class="metrics four" id="dataset-metrics"></div>
+        <div class="panel"><div class="panel-title"><h3>数据预览</h3><span id="dataset-name"></span></div><div class="table-wrap"><table><thead><tr><th>文献 ID</th><th>年份</th><th>标题</th><th>摘要</th><th>类型</th></tr></thead><tbody id="preview-body"></tbody></table></div><p class="footnote" id="format-note"></p></div>
+        <div class="actions end"><button id="to-config" class="primary">配置筛选方案 <span>→</span></button></div>
+      </div>
+    </section>
+
+    <section id="step-2" class="step-panel hidden">
+      <div id="criteria-step">
+      <div class="config-grid">
+        <div>
+          <div class="panel"><div class="panel-title"><h3>筛选判据</h3><div><button id="import-criteria" class="text-btn">导入 YAML</button><button id="save-preset" class="text-btn">保存方案</button><select id="preset-list" style="width:auto;padding:4px"><option value="">已存方案</option></select></div></div>
+            <input id="criteria-file" type="file" accept=".yaml,.yml" class="hidden">
+            <div class="form-row"><label>研究领域<input id="domain" placeholder="例如：稀土冶金与材料"></label><label>判据组合<select id="logic"><option value="all">全部满足（all）</option><option value="any">任一满足（any）</option></select></label></div>
+            <div id="criteria-list"></div><button id="add-criterion" class="secondary full">＋ 添加判据</button>
+          </div>
+          <div class="panel"><div class="panel-title"><h3>领域知识库 <span class="optional">可选</span></h3><label class="text-btn">上传 Markdown<input id="knowledge-file" type="file" accept=".md,.markdown,.txt" class="hidden"></label></div>
+            <p class="help">每篇文献仅检索相关知识条目，不把整个知识库重复发给模型。</p><textarea id="knowledge" rows="7" placeholder="## 术语或技术边界&#10;输入领域知识、定义和判定边界……"></textarea><div class="form-row compact"><label>每篇最多知识条目<input id="top-k" type="number" min="1" max="10" value="4"></label></div>
+          </div>
+          <div class="panel"><div class="panel-title"><h3>元数据预过滤 <span class="optional">可选</span></h3></div><p class="help">在模型评审前确定性过滤，节省调用。未知元数据默认保留。</p><div class="form-row three"><label>语种（如 en）<input id="filter-language" placeholder="不限"></label><label>起始日期<input id="date-from" placeholder="2000-01-01"></label><label>截止日期<input id="date-to" placeholder="2026-12-31"></label></div><label class="check"><input id="require-abstract" type="checkbox" checked> 剔除缺少摘要的文献</label></div>
+        </div>
+        <div>
+          <div class="panel sticky"><div class="panel-title"><h3>评审团队</h3><span id="reviewer-count" class="tag">2 位评审</span></div>
+            <label class="check mock-check"><input id="use-mock" type="checkbox" checked> 使用 Mock 模型（免费验证流程，不产生真实筛选结论）</label>
+            <div id="reviewer-list"></div><button id="add-reviewer" class="secondary full">＋ 添加评审员</button>
+            <div id="arbiter-settings"><h4>仲裁模型</h4><div id="arbiter-card"></div><p class="help">所有评审完成整批后，仅对整体结论存在分歧的文献统一仲裁。</p></div>
+            <hr><h4>运行参数</h4><div class="form-row"><label>每块文献数<input id="chunk-size" type="number" min="1" max="100" value="20"></label><label>并行工作线程<input id="workers" type="number" min="1" max="32" value="8"></label></div><div class="form-row"><label>输入字符预算<input id="char-budget" type="number" min="5000" step="5000" value="60000"></label><label>试运行篇数<input id="limit" type="number" min="0" placeholder="0 = 全部" value="0"></label></div>
+            <p class="help">分块只改变请求方式，不改变逐篇独立评审。较大的块不一定节省 token，且更容易输出不完整。</p>
+          </div>
+        </div>
+      </div>
+      <div class="actions spread"><button class="secondary" data-goto="1">← 返回数据集</button><button id="to-run" class="primary">检查并启动 <span>→</span></button></div>
+      </div>
+      <div id="launch-step" class="hidden"><div class="launch-card"><p class="eyebrow">READY TO SCREEN</p><h2>确认本次筛选任务</h2><label>任务名称<input id="task-name" value="稀土文献筛选"></label><div id="launch-summary" class="launch-summary"></div><div class="callout">任务启动后可在「任务与结果」查看进度、取消任务或中断恢复。真实模型调用会产生服务商费用，请先用小样本验证配置。</div><div class="actions center"><button id="back-config" class="secondary">返回修改</button><button id="start-task" class="primary large">启动筛选任务</button></div></div></div>
+    </section>
+
+  </section>
+
+  <section id="view-tasks" class="view hidden"><div class="section-heading"><div><h2>任务与结果</h2><p>所有分块即时保存，任务状态自动刷新。</p></div><button id="refresh-tasks" class="secondary">刷新</button></div><div id="task-list" class="task-list"></div></section>
+  <section id="view-compare" class="view hidden"><div class="section-heading"><div><h2>探索评审配置</h2><p>选择相同数据集与判据下的已完成任务，比较成本、效率和一致性。</p></div><button id="run-compare" class="primary" disabled>对比所选任务</button></div><div id="compare-select" class="panel"></div><div id="compare-result"></div><div class="callout">模型之间更一致，不等于筛选更准确。要判断最佳配置，请在任务详情上传人工金标准，比较 P / R / F1。</div></section>
+</main>
+<dialog id="detail-dialog"><div class="dialog-header"><div><p class="eyebrow">RUN DETAILS</p><h2 id="detail-title"></h2></div><button class="icon-btn close-dialog">×</button></div><div id="detail-content"></div></dialog>
+<dialog id="help-dialog"><div class="dialog-header"><h2>快速使用</h2><button class="icon-btn close-dialog">×</button></div><ol class="help-list"><li><b>上传题录</b><p>可全选同格式的多个分卷；不要把相同文献的 RIS 和 TXT 同时上传。</p></li><li><b>写清判据</b><p>每条判据分别描述问题、纳入、排除和边界，判据组合决定整体结论。</p></li><li><b>先 Mock，后小样本</b><p>Mock 仅用于验证流程，不是真实筛选。真实模型在 .env 中配置密钥，页面不保存密钥。</p></li><li><b>全量运行与导出</b><p>评审员独立并行评审，完成后统一仲裁；可导出纳入文献和完整审计记录。</p></li></ol></dialog>
+<script src="/app.js"></script>
+</body></html>

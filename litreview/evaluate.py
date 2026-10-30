@@ -78,7 +78,10 @@ def evaluate(results_path: str, labels_path: str) -> dict:
                 k = ("tp" if gold else "fp") if pred_overall else ("fn" if gold else "tn")
                 counters["overall"][k] += 1
 
-    report = {"matched": matched, "unmatched": unmatched, "metrics": {}}
+    report = {"matched": matched, "unmatched": unmatched,
+              "undetermined": sum(t.get("final_overall") is None for t in traces
+                                  if _match(t, labels) is not None),
+              "metrics": {}}
     for key, c in counters.items():
         p, r, f1 = _prf(c["tp"], c["fp"], c["fn"])
         report["metrics"][key] = {"precision": round(p, 4), "recall": round(r, 4),

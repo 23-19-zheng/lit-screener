@@ -26,16 +26,22 @@ def load_entries(kb_dir: str) -> list[KnowledgeEntry]:
     for path in sorted(glob.glob(os.path.join(kb_dir, "*.md"))):
         with open(path, "r", encoding="utf-8") as f:
             content = f.read()
-        blocks = content.split("\n## ")
-        for block in blocks:
-            block = block.strip()
-            if not block:
-                continue
-            lines = block.splitlines()
-            first = lines[0].lstrip("# ").strip()
-            body = "\n".join(lines[1:]).strip()
-            if first or body:
-                entries.append(KnowledgeEntry(title=first, body=body))
+        entries.extend(parse_entries(content))
+    return entries
+
+
+def parse_entries(content: str) -> list[KnowledgeEntry]:
+    """从上传或粘贴的 Markdown 构造知识条目。"""
+    entries = []
+    for block in content.split("\n## "):
+        block = block.strip()
+        if not block:
+            continue
+        lines = block.splitlines()
+        first = lines[0].lstrip("# ").strip()
+        body = "\n".join(lines[1:]).strip()
+        if first or body:
+            entries.append(KnowledgeEntry(title=first, body=body))
     return entries
 
 

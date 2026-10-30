@@ -3,4 +3,8 @@ __pycache__/
 *.pyc
 .env
 output/
+var/
+.pytest_cache/
+gui-test-screenshots/
+.zcode/plans/
 data/records*.jsonl

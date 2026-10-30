@@ -23,6 +23,7 @@ class Record:
     language: str = ""    # 归一化 ISO 639-1（如 en），未知为空
     doctype: str = ""     # 出版类型原文（article/review/...），来源间口径不一
     date: str = ""        # 归一化 ISO 日期（yyyy / yyyy-mm / yyyy-mm-dd），未知为空
+    external_id: str = "" # WoS UT / RIS AN 等来源内的稳定标识
 
     def to_dict(self):
         return asdict(self)
@@ -71,18 +72,49 @@ def _norm_title(title: str) -> str:
 
 
 def dedupe(records: list[Record]) -> list[Record]:
-    """DOI 优先，标题归一化兜底。"""
-    seen: dict[str, Record] = {}
+    """按任一已知标识去重：WoS/DOI 优先，标题兜底，并合并更完整的元数据。"""
+    parent = list(range(len(records)))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(i: int, j: int):
+        a, b = find(i), find(j)
+        if a != b:
+            parent[max(a, b)] = min(a, b)
+
+    seen: dict[tuple[str, str], int] = {}
+    for i, r in enumerate(records):
+        keys = []
+        if r.external_id:
+            keys.append(("source", r.external_id.strip().lower()))
+        if r.doi:
+            keys.append(("doi", r.doi.strip().lower()))
+        if _norm_title(r.title):
+            keys.append(("title", _norm_title(r.title)))
+        for key in keys:
+            if key in seen:
+                union(i, seen[key])
+            else:
+                seen[key] = i
+
+    groups: dict[int, list[Record]] = {}
+    for i, r in enumerate(records):
+        groups.setdefault(find(i), []).append(r)
     out = []
-    for r in records:
-        key = ("doi", r.doi.lower()) if r.doi else ("title", _norm_title(r.title))
-        if not key[1]:
-            out.append(r)  # 无任何标识，不去重
-            continue
-        if key in seen:
-            continue
-        seen[key] = r
-        out.append(r)
+    for group in groups.values():
+        base = group[0]
+        for other in group[1:]:
+            for attr in ("title", "abstract", "authors", "year", "doi", "language",
+                         "doctype", "date", "external_id"):
+                if len(getattr(other, attr)) > len(getattr(base, attr)):
+                    setattr(base, attr, getattr(other, attr))
+            if base.source != other.source:
+                base.source = "+".join(dict.fromkeys(base.source.split("+") + [other.source]))
+        out.append(base)
     return out
 
 
@@ -96,7 +128,70 @@ def load_records(path: str) -> list[Record]:
         return load_ris(path)
     if "\t" in head.splitlines()[0] if head.strip() else False:
         return load_wos_tab(path)
+    if re.search(r"^FN\s+Clarivate Analytics Web of Science", head, re.M):
+        return load_wos_tagged(path)
     return load_csv(path)
+
+
+def assign_record_ids(records: list[Record], prefix: str = "doc") -> list[Record]:
+    """分配跨分卷稳定 ID；原始 external_id 保留用于审计与匹配。"""
+    used: set[str] = set()
+    for i, r in enumerate(records, 1):
+        base = r.external_id.strip() or (f"doi:{r.doi.strip().lower()}" if r.doi else f"{prefix}-{i:06d}")
+        candidate, n = base, 2
+        while candidate in used:
+            candidate, n = f"{base}#{n}", n + 1
+        r.id = candidate
+        used.add(candidate)
+    return records
+
+
+def load_wos_tagged(path: str) -> list[Record]:
+    """读取 WoS 'FN Clarivate...' 标记文本（非制表符导出）。"""
+    records, cur, key = [], {}, None
+    multi = {"AU", "AF"}
+
+    def flush():
+        if not cur:
+            return
+        year = (cur.get("PY", [""])[0]).strip()
+        external_id = (cur.get("UT", [""])[0]).strip()
+        records.append(Record(
+            id=external_id,
+            title=" ".join(cur.get("TI", [])),
+            abstract=" ".join(cur.get("AB", [])),
+            authors="; ".join(cur.get("AU", [])),
+            year=year,
+            doi=(cur.get("DI", [""])[0]).strip(),
+            source="wos_tagged",
+            language=norm_language(cur.get("LA", [""])[0]),
+            doctype="; ".join(cur.get("DT", [])),
+            date=_norm_date((cur.get("PD", [""])[0]), year),
+            external_id=external_id,
+        ))
+
+    with open(path, "r", encoding="utf-8-sig", errors="replace") as f:
+        for line in f:
+            line = line.rstrip("\r\n")
+            m = re.match(r"^([A-Z][A-Z0-9]) (.*)$", line)
+            if m:
+                key, value = m.group(1), m.group(2).strip()
+                if key == "PT" and cur:
+                    flush()
+                    cur = {}
+                if key == "ER":
+                    flush()
+                    cur, key = {}, None
+                elif key not in ("FN", "VR", "EF"):
+                    cur.setdefault(key, []).append(value)
+            elif line.startswith("   ") and key:
+                value = line.strip()
+                if key in multi:
+                    cur[key].append(value)
+                elif cur.get(key):
+                    cur[key][-1] += " " + value
+    flush()
+    return records
 
 
 def load_ris(path: str) -> list[Record]:
@@ -107,8 +202,9 @@ def load_ris(path: str) -> list[Record]:
             return
         title = (cur.get("TI") or cur.get("T2") or [""])[0]
         year = (cur.get("PY", [""])[0]).strip()
+        external_id = (cur.get("AN", [""])[0]).strip()
         records.append(Record(
-            id=f"ris-{len(records)+1}",
+            id=external_id or f"ris-{len(records)+1}",
             title=title,
             abstract=" ".join(cur.get("AB", [])),
             authors="; ".join(cur.get("AU", [])),
@@ -118,6 +214,7 @@ def load_ris(path: str) -> list[Record]:
             language=norm_language((cur.get("LA", [""])[0])),
             doctype=(cur.get("TY", [""])[0]).strip(),
             date=_norm_date((cur.get("DA", [""])[0]), year),
+            external_id=external_id,
         ))
 
     with open(path, "r", encoding="utf-8-sig", errors="replace") as f:

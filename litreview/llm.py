@@ -21,12 +21,13 @@ class LLMClient:
         self.provider = spec["provider"]
         self.model = spec["model"]
         self.base_url = spec.get("base_url")
+        self.temperature = float(spec.get("temperature", 0))
         key = os.environ.get(spec.get("api_key_env", ""), "")
         if not key:
             raise RuntimeError(f"环境变量 {spec.get('api_key_env')} 未设置，无法调用 {self.model}")
         self.structured = spec.get("structured", "auto")
         from openai import OpenAI
-        self._client = OpenAI(base_url=self.base_url, api_key=key, timeout=180)
+        self._client = OpenAI(base_url=self.base_url, api_key=key, timeout=spec.get("timeout", 300))
 
     def complete(self, system: str, user: str) -> str:
         last_err = None
@@ -38,7 +39,7 @@ class LLMClient:
                     model=self.model,
                     messages=[{"role": "system", "content": system},
                               {"role": "user", "content": user}],
-                    temperature=0,
+                    temperature=self.temperature,
                 )
                 return resp.choices[0].message.content or ""
             except Exception as e:  # 限流/网络错误，退避重试
@@ -52,13 +53,43 @@ class LLMClient:
             model=self.model,
             messages=[{"role": "system", "content": system},
                       {"role": "user", "content": user}],
-            temperature=0,
+            temperature=self.temperature,
             response_format={"type": "json_object"},
         )
         data = json.loads(resp.choices[0].message.content or "")
         if not isinstance(data, dict):
             raise ValueError("模型输出不是 JSON 对象")
         return data
+
+    def complete_json_with_usage(self, system: str, user: str) -> tuple[dict, dict]:
+        """批量结构化调用，返回 JSON 与实际 token/结束原因。"""
+        last_err = None
+        for delay in [0] + RETRY_DELAYS:
+            if delay:
+                time.sleep(delay)
+            try:
+                resp = self._client.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "system", "content": system},
+                              {"role": "user", "content": user}],
+                    temperature=self.temperature,
+                    response_format={"type": "json_object"},
+                )
+                choice = resp.choices[0]
+                if choice.finish_reason == "length":
+                    raise ValueError("模型输出达到长度上限，请减小分块大小")
+                data = json.loads(choice.message.content or "")
+                if not isinstance(data, dict):
+                    raise ValueError("模型输出不是 JSON 对象")
+                usage = getattr(resp, "usage", None)
+                meta = {"input_tokens": getattr(usage, "prompt_tokens", None),
+                        "output_tokens": getattr(usage, "completion_tokens", None),
+                        "finish_reason": choice.finish_reason}
+                return data, meta
+            except Exception as e:
+                last_err = e
+        raise RuntimeError(f"LLM 批量调用失败（{self.model}）: {last_err}")
+
 
 
 class MockAgent:
