@@ -59,6 +59,10 @@ class Store:
                     id INTEGER PRIMARY KEY CHECK(id=1), name TEXT NOT NULL,
                     dataset_id TEXT NOT NULL, config TEXT NOT NULL, knowledge TEXT NOT NULL,
                     updated_at TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS recovery_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL,
+                    kind TEXT NOT NULL, config TEXT NOT NULL, affected_ids TEXT NOT NULL,
+                    status TEXT NOT NULL, details TEXT NOT NULL, created_at TEXT NOT NULL);
             """)
 
     def connect(self):
@@ -116,12 +120,12 @@ class Store:
         return [self.get_task(tid) for tid in ids]
 
     def update_task(self, tid: str, **fields):
-        allowed = {"status", "phase", "progress", "total", "error", "metrics", "name"}
+        allowed = {"status", "phase", "progress", "total", "error", "metrics", "name", "config"}
         values = []
         for key, value in fields.items():
             if key not in allowed:
                 raise ValueError(f"不可更新字段 {key}")
-            values.append(self._json(value) if key == "metrics" else value)
+            values.append(self._json(value) if key in {"metrics", "config"} else value)
         values += [now(), tid]
         with self.connect() as db:
             db.execute(f"UPDATE tasks SET {','.join(f'{k}=?' for k in fields)},updated_at=? WHERE id=?", values)
@@ -184,6 +188,19 @@ class Store:
             db.executemany("INSERT OR REPLACE INTO results VALUES (?,?,?)",
                            [(tid, rid, self._json(trace)) for rid, trace in results.items()])
 
+    def update_result_traces(self, tid: str, traces: dict[str, dict]):
+        """只合并指定文献，避免补仲裁时重建/丢失其他文献的结果。"""
+        with self.lock, self.connect() as db:
+            for rid, changes in traces.items():
+                row = db.execute("SELECT trace FROM results WHERE task_id=? AND record_id=?",
+                                 (tid, rid)).fetchone()
+                if not row:
+                    raise KeyError(f"任务 {tid} 中不存在文献 {rid}")
+                trace = json.loads(row["trace"])
+                trace.update(changes)
+                db.execute("UPDATE results SET trace=? WHERE task_id=? AND record_id=?",
+                           (self._json(trace), tid, rid))
+
     def get_results(self, tid: str) -> list[dict]:
         with self.connect() as db:
             rows = db.execute("SELECT record_id,trace FROM results WHERE task_id=?", (tid,)).fetchall()
@@ -197,6 +214,25 @@ class Store:
         with self.connect() as db:
             db.execute("DELETE FROM chunks WHERE task_id=? AND status!='done'", (tid,))
             db.execute("DELETE FROM results WHERE task_id=?", (tid,))
+
+    def add_recovery(self, tid: str, kind: str, config: dict, affected_ids: list[str],
+                     status: str, details: dict):
+        with self.connect() as db:
+            cursor = db.execute("INSERT INTO recovery_history(task_id,kind,config,affected_ids,status,details,created_at) VALUES(?,?,?,?,?,?,?)",
+                                (tid, kind, self._json(config), self._json(affected_ids), status,
+                                 self._json(details), now()))
+            return cursor.lastrowid
+
+    def update_recovery(self, history_id: int, status: str, details: dict):
+        with self.connect() as db:
+            db.execute("UPDATE recovery_history SET status=?,details=? WHERE id=?",
+                       (status, self._json(details), history_id))
+
+    def get_recoveries(self, tid: str) -> list[dict]:
+        with self.connect() as db:
+            rows = db.execute("SELECT * FROM recovery_history WHERE task_id=? ORDER BY id DESC", (tid,)).fetchall()
+        return [{**dict(r), "config": json.loads(r["config"]), "affected_ids": json.loads(r["affected_ids"]),
+                 "details": json.loads(r["details"])} for r in rows]
 
     def save_draft(self, name: str, dataset_id: str, config: dict, knowledge: str):
         with self.connect() as db:

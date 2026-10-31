@@ -168,6 +168,13 @@ class BatchMockAgent:
         return {"results": results}, {"input_tokens": len(user) // 4, "output_tokens": len(results) * 60,
                                      "finish_reason": "stop"}
 
+    def complete_json_stream(self, system: str, user: str, on_progress=None) -> tuple[dict, dict]:
+        data, usage = self.complete_json_with_usage(system, user)
+        if on_progress:
+            on_progress({"event": "first_chunk", "seconds": 0})
+        usage.update({"transport": "stream", "duration_seconds": 0, "first_chunk_seconds": 0})
+        return data, usage
+
 
 def make_batch_agent(spec: dict):
     return BatchMockAgent(spec) if spec.get("provider") == "mock" else make_agent(spec)

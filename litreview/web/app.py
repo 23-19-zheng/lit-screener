@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from ..evaluate import evaluate
 from ..records import assign_record_ids, dedupe, load_records
+from .audit import audit_rows, audit_summary, error_groups, render_html
 from .runner import TaskRunner
 from .store import ROOT, Store, UPLOADS, VAR, new_id
 
@@ -172,6 +173,9 @@ def task(tid: str):
         raise HTTPException(404, "任务不存在")
     task["usage"] = store.usage(tid)
     task["chunks"] = store.get_chunks(tid, include_outputs=False)
+    task["audit"] = audit_summary(store.get_results(tid))
+    task["error_groups"] = error_groups(task["chunks"])
+    task["recoveries"] = store.get_recoveries(tid)
     return task
 
 
@@ -195,6 +199,47 @@ def retry(tid: str):
     store.reset_failed_chunks(tid)
     store.update_task(tid, status="pending", phase="pending", progress=0, total=0, error="")
     runner.start(tid)
+    return store.get_task(tid)
+
+
+@app.get("/api/tasks/{tid}/audit")
+def audit(tid: str, category: str = "", q: str = "", offset: int = 0, limit: int = 100):
+    task = store.get_task(tid)
+    if not task:
+        raise HTTPException(404, "任务不存在")
+    if category not in {"", "overall", "criteria", "arbitration_error", "review_error"}:
+        raise HTTPException(400, "未知审计分类")
+    rows = audit_rows(store.get_results(tid), category, q)
+    return {"summary": audit_summary(store.get_results(tid)), "total": len(rows),
+            "items": rows[max(0, offset):max(0, offset) + min(limit, 200)]}
+
+
+@app.get("/api/tasks/{tid}/audit.html")
+def audit_html(tid: str):
+    task = store.get_task(tid)
+    if not task:
+        raise HTTPException(404, "任务不存在")
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(render_html(task, store.get_results(tid), store.get_chunks(tid, include_outputs=False)))
+
+
+@app.post("/api/tasks/{tid}/arbitration-retry")
+def arbitration_retry(tid: str):
+    task = store.get_task(tid)
+    if not task:
+        raise HTTPException(404, "任务不存在")
+    if task["status"] in {"running", "pending", "cancelling"}:
+        raise HTTPException(409, "任务正在运行，请先取消")
+    pending = sum(t.get("path") == "arbitration_error" for t in store.get_results(tid))
+    if not pending:
+        raise HTTPException(400, "没有需要补跑仲裁的文献")
+    arbiter = (task["config"].get("arbiter") or {}).copy()
+    if arbiter.get("model") == "Kimi-K3.1-Pro":
+        arbiter["temperature"] = 1
+    store.update_task(tid, config={**task["config"], "arbiter": arbiter})
+    store.update_task(tid, status="pending", phase="arbitration_pending",
+                      error="", metrics={**task["metrics"], "resume_arbitration_only": True})
+    runner.start(tid, resume_arbitration=True, arbiter_override=arbiter)
     return store.get_task(tid)
 
 

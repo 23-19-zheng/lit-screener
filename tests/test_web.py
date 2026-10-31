@@ -120,3 +120,38 @@ def test_runner_resume_uses_saved_results_and_cancel_does_not_export(isolated_st
 
     with TestClient(app) as client:
         assert client.get("/api/health").json() == {"ok": True}
+
+
+def test_resume_only_arbitration_preserves_reviews_and_merges_results(isolated_store):
+    store = isolated_store
+    records, traces = [], {}
+    for i, path in enumerate(("consistent", "arbitration_error")):
+        rid = f"WOS:{i}"
+        record = {"id": rid, "title": f"Paper {i}", "abstract": "abstract", "authors": "", "year": "2024",
+                  "doi": "", "source": "ris", "language": "en", "doctype": "JOUR", "date": "2024", "external_id": rid}
+        records.append(record)
+        reviews = {f"reviewer_{n}": {"overall": n == 1 if path == "arbitration_error" else True,
+                                   "answers": {"T1": True}, "reasonings": {"T1": "original reason"}}
+                   for n in (1, 2)}
+        traces[rid] = {"record": record, "criteria": ["T1"], "reviews": reviews, "path": path,
+                       "final_overall": True if path == "consistent" else None,
+                       "final_answers": {"T1": True} if path == "consistent" else {},
+                       "human_review": path != "consistent"}
+    did = store.create_dataset("resume-arb", [], records, {})
+    cfg = {"criteria": {"domain": "test", "logic": "all", "criteria": [{"id": "T1", "question": "yes?"}]},
+           "reviewers": [{"provider": "mock", "name": "reviewer_1", "role": "reviewer_1"},
+                         {"provider": "mock", "name": "reviewer_2", "role": "reviewer_2"}],
+           "arbiter": {"provider": "mock", "name": "arbiter", "role": "arbiter", "model": "Kimi-K3.1-Pro"},
+           "chunk_size": 20, "workers": 1}
+    tid = store.create_task("resume-arb", did, cfg)
+    store.save_results(tid, traces)
+    original = dict(traces["WOS:0"])
+    runner = TaskRunner(store)
+    runner.resume_arbitration(tid, {**cfg["arbiter"], "temperature": 1})
+    assert store.get_task(tid)["status"] == "completed"
+    unchanged = next(t for t in store.get_results(tid) if t["record_id"] == "WOS:0")
+    assert unchanged["path"] == "consistent" and unchanged["reviews"] == original["reviews"]
+    recovered = next(t for t in store.get_results(tid) if t["record_id"] == "WOS:1")
+    assert recovered["path"] == "arbitrated" and recovered["final_overall"] is True
+    assert recovered["reviews"]["reviewer_1"]["reasonings"]["T1"] == "original reason"
+    assert store.get_recoveries(tid)[0]["config"]["temperature"] == 1

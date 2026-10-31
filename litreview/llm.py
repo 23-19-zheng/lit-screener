@@ -21,11 +21,14 @@ class LLMClient:
         self.provider = spec["provider"]
         self.model = spec["model"]
         self.base_url = spec.get("base_url")
-        self.temperature = float(spec.get("temperature", 0))
+        self.temperature = float(spec["temperature"]) if spec.get("temperature") is not None else 0
+        if spec.get("temperature") == "":
+            self.temperature = None
         key = os.environ.get(spec.get("api_key_env", ""), "")
         if not key:
             raise RuntimeError(f"环境变量 {spec.get('api_key_env')} 未设置，无法调用 {self.model}")
         self.structured = spec.get("structured", "auto")
+        self.retry_delays = spec.get("retry_delays", RETRY_DELAYS)
         from openai import OpenAI
         self._client = OpenAI(base_url=self.base_url, api_key=key, timeout=spec.get("timeout", 300))
 
@@ -64,7 +67,8 @@ class LLMClient:
     def complete_json_with_usage(self, system: str, user: str) -> tuple[dict, dict]:
         """批量结构化调用，返回 JSON 与实际 token/结束原因。"""
         last_err = None
-        for delay in [0] + RETRY_DELAYS:
+        retry_delays = getattr(self, "retry_delays", RETRY_DELAYS)
+        for delay in [0] + retry_delays:
             if delay:
                 time.sleep(delay)
             try:
@@ -88,8 +92,51 @@ class LLMClient:
                 return data, meta
             except Exception as e:
                 last_err = e
+                if getattr(e, "status_code", None) == 400:
+                    break
         raise RuntimeError(f"LLM 批量调用失败（{self.model}）: {last_err}")
 
+
+
+    def complete_json_stream(self, system: str, user: str, on_progress=None) -> tuple[dict, dict]:
+        """流式收集 JSON，记录首包/完成耗时；仅在完整响应后解析。"""
+        start = time.perf_counter()
+        stream = self._client.chat.completions.create(
+            model=self.model,
+            messages=[{"role": "system", "content": system},
+                      {"role": "user", "content": user}],
+            temperature=self.temperature,
+            response_format={"type": "json_object"},
+            stream=True,
+            stream_options={"include_usage": True},
+        )
+        chunks, text, finish, usage = 0, [], None, None
+        first_at = None
+        for chunk in stream:
+            chunks += 1
+            if first_at is None:
+                first_at = round(time.perf_counter() - start, 2)
+                if on_progress:
+                    on_progress({"event": "first_chunk", "seconds": first_at})
+            if getattr(chunk, "usage", None):
+                usage = chunk.usage
+            if not chunk.choices:
+                continue
+            choice = chunk.choices[0]
+            if choice.delta.content:
+                text.append(choice.delta.content)
+            if choice.finish_reason:
+                finish = choice.finish_reason
+        if finish == "length":
+            raise ValueError("模型输出达到长度上限")
+        data = json.loads("".join(text))
+        if not isinstance(data, dict):
+            raise ValueError("模型输出不是 JSON 对象")
+        return data, {"input_tokens": getattr(usage, "prompt_tokens", None),
+                      "output_tokens": getattr(usage, "completion_tokens", None),
+                      "finish_reason": finish, "first_chunk_seconds": first_at,
+                      "duration_seconds": round(time.perf_counter() - start, 2),
+                      "stream_chunks": chunks, "transport": "stream"}
 
 
 class MockAgent:

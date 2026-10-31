@@ -68,6 +68,8 @@
   <section id="view-compare" class="view hidden"><div class="section-heading"><div><h2>探索评审配置</h2><p>选择相同数据集与判据下的已完成任务，比较成本、效率和一致性。</p></div><button id="run-compare" class="primary" disabled>对比所选任务</button></div><div id="compare-select" class="panel"></div><div id="compare-result"></div><div class="callout">模型之间更一致，不等于筛选更准确。要判断最佳配置，请在任务详情上传人工金标准，比较 P / R / F1。</div></section>
 </main>
 <dialog id="detail-dialog"><div class="dialog-header"><div><p class="eyebrow">RUN DETAILS</p><h2 id="detail-title"></h2></div><button class="icon-btn close-dialog">×</button></div><div id="detail-content"></div></dialog>
+<dialog id="audit-dialog" class="audit-dialog"><div class="dialog-header"><div><p class="eyebrow">HUMAN-READABLE AUDIT</p><h2 id="audit-title"></h2></div><button class="icon-btn close-dialog">×</button></div><div id="audit-content"></div></dialog>
 <dialog id="help-dialog"><div class="dialog-header"><h2>快速使用</h2><button class="icon-btn close-dialog">×</button></div><ol class="help-list"><li><b>上传题录</b><p>可全选同格式的多个分卷；不要把相同文献的 RIS 和 TXT 同时上传。</p></li><li><b>写清判据</b><p>每条判据分别描述问题、纳入、排除和边界，判据组合决定整体结论。</p></li><li><b>先 Mock，后小样本</b><p>Mock 仅用于验证流程，不是真实筛选。真实模型在 .env 中配置密钥，页面不保存密钥。</p></li><li><b>全量运行与导出</b><p>评审员独立并行评审，完成后统一仲裁；可导出纳入文献和完整审计记录。</p></li></ol></dialog>
-<script src="/app.js?v=0.2.2"></script>
+<script src="/app.js?v=0.3.0"></script>
+<script src="/task-details.js?v=0.3.0"></script>
 </body></html>
