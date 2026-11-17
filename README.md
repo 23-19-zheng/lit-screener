@@ -91,12 +91,16 @@ python -m litreview.cli screen --config config.yaml --mock --limit 5
 # 3) 真实筛选
 python -m litreview.cli screen --config config.yaml            # 全量
 python -m litreview.cli screen --config config.yaml --limit 50 # 先跑 50 篇调判据
+# 中断（崩溃/Ctrl-C）后续跑：trace 逐篇实时写入，只补跑未完成的文献（需相同配置与输入）
+python -m litreview.cli screen --config config.yaml --resume output/trace_xxx.jsonl
 
 # 4) 人工标注小样本后评估
 python -m litreview.cli evaluate --results output/trace_xxx.jsonl --labels labels/sample_golden.csv
 ```
 
-API key 在 `.env` 中配置（模板见 `.env.example`），由 `api_key_env` 指定环境变量名。
+API key 在 `.env` 中配置（模板见 `.env.example`），由 `api_key_env` 指定环境变量名。读取顺序：配置文件所在目录的 `.env` 优先，仓库根目录（当前工作目录）的 `.env` 补齐其余变量，已存在的环境变量不会被覆盖。
+
+依赖：`requirements.txt` 声明版本范围；`requirements.lock` 是锁定的完整版本（部署/CI 用），开发与测试安装 `pip install -r requirements-dev.txt`，运行 `python -m pytest -q`。
 
 ## 配置说明（以 themes/anammox/config.yaml 为例）
 

@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from litreview.records import Record, assign_record_ids, dedupe, load_records
 
 ATTACHMENT = Path("/Users/zhengchao/Desktop/稀土浸出物质筛选相关文献")
@@ -44,6 +46,7 @@ ER  -
     assert len(dedupe([a, b])) == 1
 
 
+@pytest.mark.skipif(not ATTACHMENT.exists(), reason="依赖本机附件目录")
 def test_dedupe_matches_doi_record_to_title_only_record():
     a = assign_record_ids(load_records(str(ATTACHMENT / "RIS格式/5001-5117.ris")))[0]
     b = type(a)(id="other", title=a.title, abstract="A much longer abstract " * 200)
@@ -83,3 +86,62 @@ def test_dedupe_keeps_same_title_with_different_dois():
     c = Record(id="c", title="Editorial")
     merged = dedupe([a, b, c])
     assert sorted(r.doi for r in merged) == ["10.1/aaa", "10.1/bbb"]
+
+
+class _FakeResp:
+    def __init__(self, status, data=None):
+        self.status_code, self._data = status, data or {}
+
+    def json(self):
+        return self._data
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+
+class _FakeSession:
+    def __init__(self, responses):
+        self.responses, self.calls = list(responses), []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def get(self, url, params=None, **kw):
+        self.calls.append(params)
+        return self.responses.pop(0) if self.responses else _FakeResp(429)
+
+
+def _patch_session(monkeypatch, responses):
+    import litreview.records as records_module
+    session = _FakeSession(responses)
+    monkeypatch.setattr(records_module.requests, "Session", lambda: session)
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    return session
+
+
+def test_semantic_scholar_gives_up_after_repeated_rate_limits(monkeypatch):
+    import pytest
+    from litreview.records import fetch_semantic_scholar
+    session = _patch_session(monkeypatch, [])
+    with pytest.raises(RuntimeError, match="429"):
+        fetch_semantic_scholar("q", max_records=10)
+    assert len(session.calls) <= 5
+
+
+def test_openalex_date_filters_combine_without_duplicates(monkeypatch):
+    from litreview.records import fetch_openalex
+    empty = {"results": [], "meta": {}}
+    session = _patch_session(monkeypatch, [_FakeResp(200, empty)] * 3)
+    fetch_openalex("q", from_year=2015, date_to="2024")
+    fetch_openalex("q", from_year=2015, date_from="2020")
+    fetch_openalex("q", from_year=2021, date_from="2020-06-01")
+    filters = [p["filter"] for p in session.calls]
+    assert filters == [
+        "from_publication_date:2015-01-01,to_publication_date:2024-12-31",
+        "from_publication_date:2020-01-01",
+        "from_publication_date:2021-01-01",
+    ]

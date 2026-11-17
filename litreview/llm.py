@@ -10,6 +10,12 @@ import time
 RETRY_DELAYS = [2, 5, 10]  # 秒
 
 
+def _retryable(e: Exception) -> bool:
+    """限流/超时/服务端错误/网络异常可重试；其余 4xx（参数、鉴权、模型不存在）重试也不会成功。"""
+    status = getattr(e, "status_code", None)
+    return status is None or status in (408, 409, 429) or status >= 500
+
+
 class LLMClient:
     """OpenAI 兼容接口客户端（火山方Ark/DeepSeek/OpenAI/Qwen/GLM 等均适用）。
 
@@ -21,20 +27,22 @@ class LLMClient:
         self.provider = spec["provider"]
         self.model = spec["model"]
         self.base_url = spec.get("base_url")
-        self.temperature = float(spec["temperature"]) if spec.get("temperature") is not None else 0
-        if spec.get("temperature") == "":
-            self.temperature = None
+        temperature = spec.get("temperature")
+        # 空字符串表示不传 temperature，使用服务端默认值
+        self.temperature = None if temperature == "" else float(temperature) if temperature is not None else 0
         key = os.environ.get(spec.get("api_key_env", ""), "")
         if not key:
             raise RuntimeError(f"环境变量 {spec.get('api_key_env')} 未设置，无法调用 {self.model}")
         self.structured = spec.get("structured", "auto")
         self.retry_delays = spec.get("retry_delays", RETRY_DELAYS)
         from openai import OpenAI
-        self._client = OpenAI(base_url=self.base_url, api_key=key, timeout=spec.get("timeout", 300))
+        # 关闭 SDK 自带重试，只保留下面一层，避免一次失败被放大成十几个请求
+        self._client = OpenAI(base_url=self.base_url, api_key=key, timeout=spec.get("timeout", 300),
+                              max_retries=0)
 
     def complete(self, system: str, user: str) -> str:
         last_err = None
-        for delay in [0] + RETRY_DELAYS:
+        for delay in [0] + list(self.retry_delays):
             if delay:
                 time.sleep(delay)
             try:
@@ -47,18 +55,25 @@ class LLMClient:
                 return resp.choices[0].message.content or ""
             except Exception as e:  # 限流/网络错误，退避重试
                 last_err = e
+                if not _retryable(e):
+                    break
         raise RuntimeError(f"LLM 调用失败（{self.model}）: {last_err}")
 
     def complete_json(self, system: str, user: str) -> dict:
         """response_format JSON 模式，单次尝试；失败抛异常，由调用方回退文本路径。
         不做退避重试：参数不支持/返回非 JSON 时快速失败，网络类错误交给文本路径的重试。"""
-        resp = self._client.chat.completions.create(
-            model=self.model,
-            messages=[{"role": "system", "content": system},
-                      {"role": "user", "content": user}],
-            temperature=self.temperature,
-            response_format={"type": "json_object"},
-        )
+        try:
+            resp = self._client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "system", "content": system},
+                          {"role": "user", "content": user}],
+                temperature=self.temperature,
+                response_format={"type": "json_object"},
+            )
+        except Exception as e:
+            if not _retryable(e):  # 端点拒绝 JSON 模式：记住，后续直接走文本路径
+                self.structured = "text"
+            raise
         data = json.loads(resp.choices[0].message.content or "")
         if not isinstance(data, dict):
             raise ValueError("模型输出不是 JSON 对象")
@@ -92,7 +107,7 @@ class LLMClient:
                 return data, meta
             except Exception as e:
                 last_err = e
-                if getattr(e, "status_code", None) == 400:
+                if not _retryable(e):
                     break
         raise RuntimeError(f"LLM 批量调用失败（{self.model}）: {last_err}")
 

@@ -326,13 +326,17 @@ def fetch_openalex(query: str, from_year: int | None = None,
     """OpenAlex 检索（免费）。cursor 翻页自 2025 起需免费 API key（openalex.org/settings/api），
     无 key 时仅能取第一页（≤200 条）。date_from/date_to 为 ISO 日期或年份。"""
     base = "https://api.openalex.org/works"
+    def bound(v, is_to: bool) -> str:  # 年份补全为 ISO 日期，便于比较和 OpenAlex 解析
+        v = str(v or "").strip()
+        return (f"{v}-12-31" if is_to else f"{v}-01-01") if len(v) == 4 and v.isdigit() else v
+
     filt = []
-    if date_from:
-        filt.append(f"from_publication_date:{date_from}")
+    # date_from 与 from_year 同时给出时取更晚（更严格）的一个，且只生成一个下界条件
+    lower = max(bound(date_from, False), bound(from_year, False))
+    if lower:
+        filt.append(f"from_publication_date:{lower}")
     if date_to:
-        filt.append(f"to_publication_date:{date_to}")
-    elif from_year:
-        filt.append(f"from_publication_date:{from_year}-01-01")
+        filt.append(f"to_publication_date:{bound(date_to, True)}")
     records, cursor = [], "*"
     import time
     with requests.Session() as s:
@@ -386,7 +390,7 @@ def fetch_semantic_scholar(query: str, from_year: int | None = None,
     if key:
         headers["x-api-key"] = key
     fields = "title,abstract,year,externalIds,authors,language,publicationTypes,publicationDate"
-    records, offset = [], 0
+    records, offset, rate_limited = [], 0, 0
     with requests.Session() as s:
         while len(records) < max_records:
             params = {"query": query, "fields": fields, "limit": min(100, max_records - len(records)),
@@ -396,9 +400,13 @@ def fetch_semantic_scholar(query: str, from_year: int | None = None,
             resp = s.get("https://api.semanticscholar.org/graph/v1/paper/search",
                          params=params, headers=headers, timeout=60)
             if resp.status_code == 429:
+                rate_limited += 1
+                if rate_limited > 4:  # 连续限流时报错退出，避免无限循环
+                    raise RuntimeError("Semantic Scholar 持续限流（HTTP 429），请配置 S2_API_KEY 或稍后重试")
                 import time
-                time.sleep(5)
+                time.sleep(5 * 2 ** (rate_limited - 1))
                 continue
+            rate_limited = 0
             resp.raise_for_status()
             data = resp.json()
             for p in data.get("data", []):

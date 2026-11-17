@@ -4,6 +4,7 @@
 用法:
   python -m litreview.cli screen    --config config.yaml [--mock] [--limit N] [--since YYYY-MM-DD]
                                    [--filter-only]   # 只跑收集+过滤，输出预览清单
+                                   [--resume output/trace_xxx.jsonl]  # 中断后续跑
   python -m litreview.cli evaluate  --results output/trace_xxx.jsonl --labels labels/sample.csv
   python -m litreview.cli new-theme themes/<name>    # 从模板创建新主题包
 """
@@ -12,6 +13,35 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+
+
+def select_records(records: list, since: str, limit: int, require_abstract: bool) -> list:
+    """--since / 缺摘要剔除 / --limit。先剔除缺摘要再截取，保证 --limit N 实际处理 N 篇。"""
+    from .pipeline import apply_filters
+
+    if since:
+        # 与元数据过滤同一口径：按完整日期比较，日期未知的记录保留交给判据兜底
+        records, dropped, _ = apply_filters(records, {"date_from": since})
+        print(f"--since {since}: 剔除 {len(dropped)} 篇，剩余 {len(records)} 篇")
+    if require_abstract:
+        missing = sum(1 for r in records if not r.abstract.strip())
+        records = [r for r in records if r.abstract.strip()]
+        if missing:
+            print(f"剔除缺摘要 {missing} 篇（require_abstract=true）")
+    if limit:
+        records = records[:limit]
+        print(f"--limit {limit}: 剩余 {len(records)} 篇")
+    return records
+
+
+def load_env(config_path: str):
+    """主题目录的 .env 优先，仓库根目录（CWD）的 .env 补齐其余变量；已存在的环境变量不覆盖。"""
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return
+    load_dotenv(os.path.join(os.path.dirname(os.path.abspath(config_path)), ".env"))
+    load_dotenv(os.path.join(os.getcwd(), ".env"))
 
 
 def cmd_screen(args):
@@ -45,26 +75,15 @@ def cmd_screen(args):
         print(f"过滤预览已写出: {prev}（保留 {len(records)} / 剔除 {len(dropped_pairs)}）")
         return
 
-    if args.since:
-        records = [r for r in records if (r.year or "") >= args.since[:4]]
-        print(f"--since {args.since}: 剩余 {len(records)} 篇")
-    if args.limit:
-        records = records[:args.limit]
-        print(f"--limit {args.limit}: 剩余 {len(records)} 篇")
+    records = select_records(records, args.since, args.limit,
+                             cfg.get("run", {}).get("require_abstract", True))
     if not records:
         print("没有可筛选的文献", file=sys.stderr)
         sys.exit(1)
 
-    require_abs = cfg.get("run", {}).get("require_abstract", True)
-    if require_abs:
-        dropped = [r for r in records if not r.abstract.strip()]
-        records = [r for r in records if r.abstract.strip()]
-        if dropped:
-            print(f"剔除缺摘要 {len(dropped)} 篇（require_abstract=true）")
-
     screener = Screener(cfg, mock=args.mock)
     screener.filter_stats = filter_stats
-    summary = screener.run(records, out_dir=args.out)
+    summary = screener.run(records, out_dir=args.out, resume=args.resume or None)
     print("\n===== 汇总 =====")
     for k, v in summary["stats"].items():
         if k not in ("per_criterion_yes", "models"):
@@ -115,6 +134,8 @@ def main(argv=None):
     p_screen.add_argument("--filter-only", action="store_true",
                           help="只执行收集+过滤并输出预览清单，不调用 LLM")
     p_screen.add_argument("--out", default="output", help="输出目录")
+    p_screen.add_argument("--resume", default="",
+                          help="续跑已中断的 trace_*.jsonl（需相同配置与输入），只补跑未完成的文献")
 
     p_ev = sub.add_parser("evaluate", help="金标准评估 P/R/F1")
     p_ev.add_argument("--results", required=True, help="trace_*.jsonl 路径")
@@ -125,13 +146,7 @@ def main(argv=None):
 
     args = parser.parse_args(argv)
 
-    # 加载 .env（存在才加载）
-    try:
-        from dotenv import load_dotenv
-        base = os.path.dirname(os.path.abspath(args.config)) if args.cmd == "screen" else os.getcwd()
-        load_dotenv(os.path.join(base, ".env") if args.cmd == "screen" else ".env")
-    except ImportError:
-        pass
+    load_env(args.config if args.cmd == "screen" else os.path.join(os.getcwd(), "config.yaml"))
 
     if args.cmd == "screen":
         cmd_screen(args)

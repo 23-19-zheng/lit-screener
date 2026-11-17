@@ -11,11 +11,17 @@ Python 多智能体文献筛选框架（无 Web/前端，纯 CLI）。核心流�
 ```bash
 source .venv/bin/activate
 
-# 冒烟测试（不调 LLM，走 MockAgent）——本项目没有单元测试，--mock 是主要验证手段
+# 单元测试（tests/，不调 LLM；CI 见 .github/workflows/ci.yml）
+python -m pytest -q
+
+# 冒烟测试（不调 LLM，走 MockAgent）
 python -m litreview.cli screen --config config.yaml --mock --limit 5
 
 # 真实筛选（先用 --limit 30~50 调判据，再全量）
 python -m litreview.cli screen --config config.yaml --limit 50
+
+# 中断后续跑（trace 逐篇实时写入，只补跑未完成/运行异常的文献）
+python -m litreview.cli screen --config config.yaml --resume output/trace_xxx.jsonl
 
 # 只跑收集+过滤，不调 LLM，输出 filter_preview_*.csv
 python -m litreview.cli screen --config config.yaml --filter-only
@@ -27,7 +33,7 @@ python -m litreview.cli evaluate --results output/trace_xxx.jsonl --labels label
 python -m litreview.cli new-theme themes/mytopic
 ```
 
-依赖只有 `requirements.txt`（pyyaml/requests/openai/scikit-learn/pandas 等），`pip install -r requirements.txt`。API key 在 `.env` 中，由配置里各 agent 的 `api_key_env` 指定环境变量名。
+依赖：`requirements.txt` 声明版本范围；`requirements.lock` 为锁定版本（CI/部署用）；开发安装 `pip install -r requirements-dev.txt`（锁定依赖 + pytest/httpx）。改了 `requirements.txt` 要重新生成 lock。API key 在 `.env` 中，由配置里各 agent 的 `api_key_env` 指定环境变量名；配置文件目录的 `.env` 优先，仓库根目录 `.env` 补齐。
 
 ## 架构
 
@@ -50,5 +56,6 @@ python -m litreview.cli new-theme themes/mytopic
 - **运行时工作目录必须是仓库根目录**：主题包 config 里的相对路径（如 `themes/anammox/criteria.yaml`、`data/`）都相对 CWD 解析。
 - 三种模式语义不同：`precision`（仅分歧件进人工清单）、`recall`（排除需评审一致或仲裁确认，"有评审 Yes 但整体排除"的边界件也进清单，适合系统性综述）、单评审（`reviewer_2: null`）配合 `--since` 做日常追踪。
 - 解析失败自动重试一次，仍失败进人工清单，**不猜**。
+- LLM 调用只有 `LLMClient` 一层重试（SDK 的 `max_retries=0`）：只重试 429/408/5xx/网络错误，其余 4xx 直接失败；端点拒绝 JSON 模式后该 agent 自动切到文本协议，不再每篇白调一次。
 - `require_abstract: true` 时缺摘要记录直接剔除。
 - 所有运行产物进 `output/`，按 run_id 区分；不要把一次性实验产物提交进 git。

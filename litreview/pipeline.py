@@ -302,12 +302,36 @@ class Screener:
 
     # ------------------------------------------------------------------ 批量
 
-    def run(self, records: list[Record], out_dir: str = "output") -> dict:
-        run_id = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+    def run(self, records: list[Record], out_dir: str = "output", resume: str | None = None) -> dict:
+        """逐篇筛选。trace 每完成一篇即追加写盘；resume 指定已有 trace 时只补跑未完成的文献。"""
         os.makedirs(out_dir, exist_ok=True)
-        trace_path = os.path.join(out_dir, f"trace_{run_id}.jsonl")
-        traces: list[dict] = []
+        finished: dict[str, dict] = {}
+        if resume:
+            trace_path = resume
+            run_id = os.path.basename(resume).removeprefix("trace_").removesuffix(".jsonl")
+            with open(resume, "r", encoding="utf-8") as f:
+                for line in f:
+                    try:
+                        t = json.loads(line)
+                    except json.JSONDecodeError:  # 崩溃时写了半行，丢弃
+                        continue
+                    if t.get("path") != "error":  # 运行异常的文献重跑
+                        finished[t["record"]["id"]] = t
+            # 只保留有效行重写文件，避免半行与后续追加内容粘连
+            with open(trace_path, "w", encoding="utf-8") as f:
+                for t in finished.values():
+                    f.write(json.dumps(t, ensure_ascii=False) + "\n")
+        else:
+            run_id = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+            trace_path = os.path.join(out_dir, f"trace_{run_id}.jsonl")
+        todo = [r for r in records if r.id not in finished]
+        if resume:
+            _log(f"续跑 {trace_path}：已完成 {len(records) - len(todo)} 篇，剩余 {len(todo)} 篇")
+        else:
+            _log(f"trace 实时写入 {trace_path}，中断后可加 --resume {trace_path} 续跑")
+        new: dict[str, dict] = {}
         done = 0
+        trace_file = open(trace_path, "a", encoding="utf-8")
 
         def _work(r: Record) -> dict:
             nonlocal done
@@ -320,17 +344,20 @@ class Screener:
                      "criteria": [c.id for c in self.criteria],
                      "final_answers": {}}
             with _print_lock:
+                trace_file.write(json.dumps(t, ensure_ascii=False) + "\n")
+                trace_file.flush()
+                new[r.id] = t
                 done += 1
-                if done % 10 == 0 or done == len(records):
-                    print(f"进度: {done}/{len(records)}", flush=True)
+                if done % 10 == 0 or done == len(todo):
+                    print(f"进度: {done}/{len(todo)}", flush=True)
             return t
 
-        with ThreadPoolExecutor(max_workers=self.cfg.get("run", {}).get("threads", 10)) as ex:
-            traces = list(ex.map(_work, records))
-
-        with open(trace_path, "w", encoding="utf-8") as f:
-            for t in traces:
-                f.write(json.dumps(t, ensure_ascii=False) + "\n")
+        try:
+            with ThreadPoolExecutor(max_workers=self.cfg.get("run", {}).get("threads", 10)) as ex:
+                list(ex.map(_work, todo))
+        finally:
+            trace_file.close()
+        traces = [finished.get(r.id) or new[r.id] for r in records]
 
         summary = self._write_reports(traces, run_id, out_dir)
         _log(f"完成。trace: {trace_path}")
