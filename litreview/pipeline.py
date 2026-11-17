@@ -221,6 +221,11 @@ class Screener:
         arb["output_mode"] = "text"
         return arb
 
+    def _composed(self, out: dict) -> bool | None:
+        """评审的有效整体判定：逐判据可组合时以组合为准，否则用其整体判定。"""
+        composed = combine(out["answers"], self.logic)
+        return composed if composed is not None else out["overall"]
+
     def screen_one(self, record: Record) -> dict:
         if self.retriever:
             kb_entries = self.retriever.retrieve(
@@ -242,9 +247,11 @@ class Screener:
         else:
             out_b = self._review(self.agent_b, record, knowledge_text)
             trace["reviewer_b"] = out_b
-            if out_a["overall"] is not None and out_a["overall"] == out_b["overall"]:
+            # 先按逐判据组合校正各自的整体判定再比较，避免"整体一致、组合后分歧"被直接采纳
+            overall_a, overall_b = self._composed(out_a), self._composed(out_b)
+            if overall_a is not None and overall_a == overall_b:
                 trace["path"] = "consistent"
-                final_answers, final_overall = out_a["answers"], out_a["overall"]
+                final_answers, final_overall = out_a["answers"], overall_a
             else:
                 trace["path"] = "disputed"
                 arb = self._arbitrate(record, out_a, out_b, knowledge_text)
@@ -274,10 +281,10 @@ class Screener:
         if include is None:
             human_review, reason = True, "解析失败/无法判定"
         elif self.mode == "precision":
-            if trace["path"].startswith(("disputed", "arbitration_parse_error")):
+            if "arbitration" in trace:  # 走过仲裁即评审分歧（path 已被改写为 arbitrated）
                 human_review, reason = True, "评审分歧"
         elif self.mode == "recall":
-            if trace["path"].startswith(("disputed", "arbitration_parse_error")):
+            if "arbitration" in trace:
                 human_review, reason = True, "评审分歧"
             elif include is False:
                 yes_by_any = any(
@@ -365,7 +372,7 @@ class Screener:
         stats = {
             "total": n, "include": n_inc, "exclude": n_exc, "undetermined": n_und,
             "human_review": len(disputed),
-            "disputed_overall": sum(1 for p in paths if p == "disputed"),
+            "disputed_overall": sum(1 for t in traces if "arbitration" in t),
             "arbitrated": sum(1 for p in paths if p == "arbitrated"),
             "consistent": sum(1 for p in paths if p == "consistent"),
             "single_reviewer": sum(1 for p in paths if p == "single_reviewer"),

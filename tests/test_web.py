@@ -155,3 +155,63 @@ def test_resume_only_arbitration_preserves_reviews_and_merges_results(isolated_s
     assert recovered["path"] == "arbitrated" and recovered["final_overall"] is True
     assert recovered["reviews"]["reviewer_1"]["reasonings"]["T1"] == "original reason"
     assert store.get_recoveries(tid)[0]["config"]["temperature"] == 1
+
+
+def _mock_task(store, status):
+    records = [{"id": "WOS:1", "title": "T", "abstract": "A", "authors": "", "year": "2024", "doi": "",
+                "source": "ris", "language": "en", "doctype": "JOUR", "date": "2024", "external_id": "WOS:1"}]
+    did = store.create_dataset("cancel", [], records, {})
+    cfg = {"criteria": {"domain": "test", "logic": "all", "criteria": [{"id": "T1", "question": "yes?"}]},
+           "reviewers": [{"provider": "mock", "model": "m", "name": "reviewer_1", "role": "reviewer_1"}],
+           "chunk_size": 1, "workers": 1}
+    tid = store.create_task("cancel", did, cfg)
+    store.update_task(tid, status=status)
+    return tid
+
+
+def test_cancel_task_without_thread_finishes_and_can_retry(isolated_store):
+    with TestClient(app) as client:
+        tid = _mock_task(isolated_store, "interrupted")  # 服务启动后才中断，没有线程接手
+        assert client.post(f"/api/tasks/{tid}/cancel").json()["status"] == "cancelled"
+        assert client.post(f"/api/tasks/{tid}/retry").status_code == 200
+        assert wait(client, tid)["status"] == "completed"
+
+
+def test_recover_does_not_restart_cancelling_task(isolated_store):
+    tid = _mock_task(isolated_store, "cancelling")
+    runner = TaskRunner(isolated_store)
+    runner.recover()
+    assert not runner.threads
+    assert isolated_store.get_task(tid)["status"] == "cancelled"
+
+
+def test_create_task_rejects_blank_criterion_question(isolated_store):
+    tid = _mock_task(isolated_store, "completed")
+    task = isolated_store.get_task(tid)
+    cfg = {**task["config"], "criteria": {"logic": "all", "criteria": [{"id": "T1", "question": "  "}]}}
+    with TestClient(app) as client:
+        res = client.post("/api/tasks", json={"name": "x", "dataset_id": task["dataset_id"], "config": cfg})
+        assert res.status_code == 400
+
+
+def test_resume_arbitration_progress_keeps_resume_only_flag(isolated_store, monkeypatch):
+    store = isolated_store
+    tid = _mock_task(store, "pending")
+    record = store.get_dataset(store.get_task(tid)["dataset_id"])["records"][0]
+    reviews = {f"reviewer_{n}": {"overall": n == 1, "answers": {"T1": n == 1}, "reasonings": {}} for n in (1, 2)}
+    store.save_results(tid, {"WOS:1": {"record": record, "criteria": ["T1"], "reviews": reviews,
+                                       "path": "arbitration_error", "final_overall": None,
+                                       "final_answers": {}, "human_review": True}})
+    cfg = store.get_task(tid)["config"]
+    cfg["reviewers"].append({"provider": "mock", "name": "reviewer_2", "role": "reviewer_2"})
+    cfg["arbiter"] = {"provider": "mock", "name": "arbiter", "role": "arbiter", "model": "m"}
+    store.update_task(tid, config=cfg, metrics={"resume_arbitration_only": True})
+    flags = []
+    original = store.update_task
+    def spy(t, **fields):
+        original(t, **fields)
+        if "progress" in fields and fields.get("status") != "completed":
+            flags.append(store.get_task(t)["metrics"].get("resume_arbitration_only"))
+    monkeypatch.setattr(store, "update_task", spy)
+    TaskRunner(store).resume_arbitration(tid)
+    assert flags and all(flags)

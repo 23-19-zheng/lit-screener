@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from litreview.records import assign_record_ids, dedupe, load_records
+from litreview.records import Record, assign_record_ids, dedupe, load_records
 
 ATTACHMENT = Path("/Users/zhengchao/Desktop/稀土浸出物质筛选相关文献")
 
@@ -65,3 +65,21 @@ def test_attachment_both_formats_contain_same_5117_wos_records():
     assert len(assign_record_ids(dedupe(ris))) == 5116
     assert sum(not r.abstract for r in ris) == 3
     assert sum("review" in r.doctype.lower() for r in txt) == 322
+
+
+def test_ris_endnote_tags_t1_n2_y1(tmp_path):
+    ris = tmp_path / "endnote.ris"
+    ris.write_text("TY  - JOUR\nT1  - Real Paper Title\nT2  - Journal of Hydrometallurgy\n"
+                   "N2  - This is the abstract.\nY1  - 2020/05/12/\nER  - \n")
+    r = load_records(str(ris))[0]
+    assert r.title == "Real Paper Title"
+    assert r.abstract == "This is the abstract."
+    assert r.year == "2020"
+
+
+def test_dedupe_keeps_same_title_with_different_dois():
+    a = Record(id="a", title="Editorial", doi="10.1/aaa")
+    b = Record(id="b", title="Editorial", doi="10.1/bbb")
+    c = Record(id="c", title="Editorial")
+    merged = dedupe([a, b, c])
+    assert sorted(r.doi for r in merged) == ["10.1/aaa", "10.1/bbb"]

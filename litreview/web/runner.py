@@ -34,12 +34,22 @@ class TaskRunner:
             thread.start()
 
     def cancel(self, tid: str):
-        self.cancelled.add(tid)
-        self.store.update_task(tid, status="cancelling")
+        with self.lock:
+            self.cancelled.add(tid)
+            self.queued.discard(tid)
+            alive = tid in self.threads and self.threads[tid].is_alive()
+        # 没有线程（待恢复/排队中）时无人收尾，直接置为已取消
+        if alive:
+            self.store.update_task(tid, status="cancelling")
+        else:
+            self.store.update_task(tid, status="cancelled", phase="cancelled")
 
     def recover(self):
         for task in self.store.list_tasks():
-            if task["status"] not in {"pending", "running", "cancelling", "interrupted"}:
+            if task["status"] == "cancelling":  # 重启前用户已要求取消，不能自动恢复运行
+                self.store.update_task(task["id"], status="cancelled", phase="cancelled")
+                continue
+            if task["status"] not in {"pending", "running", "interrupted"}:
                 continue
             # 已有最终结果时不能直接清空；补仲裁任务也只能恢复仲裁阶段。
             has_results = bool(self.store.get_results(task["id"]))
@@ -84,11 +94,11 @@ class TaskRunner:
             return
         config = task["config"]
         arbiter = arbiter_override or config.get("arbiter")
+        if not arbiter:
+            raise ValueError("该任务未配置仲裁模型")
         arbiter = {**arbiter, "timeout": arbiter.get("recovery_timeout", 90),
                    "retry_delays": arbiter.get("recovery_retry_delays", [3]),
                    "recovery_stream": True}
-        if not arbiter:
-            raise ValueError("该任务未配置仲裁模型")
         history_id = self.store.add_recovery(
             tid, "arbitration_only", arbiter, [t["record_id"] for t in targets], "running",
             {"previous_errors": [{"record_id": t["record_id"], "path": t["path"]} for t in targets]})
@@ -150,7 +160,9 @@ class TaskRunner:
                             "knowledge_used": knowledge}})
                     done = len([c for c in self.store.get_chunks(tid, include_outputs=False)
                                 if c["reviewer"] == chunk_reviewer and c["status"] == "done"])
-                    self.store.update_task(tid, progress=done, metrics=self.store.usage(tid))
+                    # 合并而非覆盖 metrics：保留 resume_arbitration_only，崩溃重启后仍只补仲裁
+                    self.store.update_task(tid, progress=done, metrics={
+                        **task["metrics"], **self.store.usage(tid)})
                 return result["outputs"]
 
             from concurrent.futures import ThreadPoolExecutor
@@ -227,7 +239,7 @@ class TaskRunner:
 
         def on_phase(phase, _, total):
             if phase == "arbitrating":
-                done = self.store.chunk_stats(tid).get("arbitration:done", {}).get("count", 0)
+                done = self.store.chunk_stats(tid, top_level_only=True).get("arbitration:done", {}).get("count", 0)
                 self.store.update_task(tid, phase=phase, total=total, progress=done)
 
         def on_result(kind, reviewer, index, result):
@@ -237,7 +249,7 @@ class TaskRunner:
                 self.store.save_chunk(tid, kind, reviewer, index, result["status"],
                                       result.get("records", []), result.get("outputs", {}),
                                       result.get("usage", {}), result.get("error", ""))
-                stats = self.store.chunk_stats(tid)
+                stats = self.store.chunk_stats(tid, top_level_only=True)
                 done = stats.get(f"{kind}:done", {}).get("count", 0)
                 total = total_review_chunks if kind == "review" else len(screener._arb_chunks)
                 self.store.update_task(tid, progress=done, total=total, metrics=self.store.usage(tid))
@@ -248,8 +260,8 @@ class TaskRunner:
         total_review_chunks = len(chunks) * len(screener.reviewers)
         self._arb_chunks = []
         self.store.update_task(tid, total=total_review_chunks,
-                               progress=len([c for c in self.store.get_chunks(tid)
-                                             if c["kind"] == "review" and c["status"] == "done"]))
+                               progress=self.store.chunk_stats(tid, top_level_only=True)
+                               .get("review:done", {}).get("count", 0))
         traces = screener.run(records)
         if tid in self.cancelled:
             self.store.update_task(tid, status="cancelled", phase="cancelled")

@@ -124,3 +124,25 @@ def test_batch_failure_splits_and_only_retries_missing_records():
                             saved_reviews=saved_reviews)
     result = resumed.run(records(2))
     assert result["WOS:0000"]["reviews"]["reviewer_1"] == saved["WOS:0000"]["reviews"]["reviewer_1"]
+
+
+def test_split_retry_chunk_indexes_never_collide_with_top_level_chunks(monkeypatch):
+    import litreview.batch as batch_module
+    pack, criteria = criteria_from_dict(config())
+
+    class Flaky(batch_module.BatchMockAgent):
+        def complete_json_with_usage(self, system, user):
+            if "ID: WOS:0000" in user and "ID: WOS:0001" in user:
+                raise ValueError("boom")
+            return super().complete_json_with_usage(system, user)
+
+    monkeypatch.setattr(batch_module, "make_batch_agent", lambda spec: Flaky(spec))
+    saved = {}
+    screener = BatchScreener(pack=pack, criteria=criteria, chunk_size=2, workers=1,
+                             reviewers=[{"name": "R1", "provider": "mock", "role": "reviewer_1"}],
+                             on_result=lambda kind, reviewer, index, res:
+                             saved.setdefault(index, []).append(res["records"]))
+    screener.run(records(6))
+    # 每个编号只能对应同一组文献，否则按 (kind, reviewer, index) 存库会互相覆盖
+    assert all(len({tuple(r) for r in recs}) == 1 for recs in saved.values()), saved
+    assert {i for i in saved if i >= 0} == {0, 1, 2}

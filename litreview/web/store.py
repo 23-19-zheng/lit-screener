@@ -152,12 +152,14 @@ class Store:
             out.append(item)
         return out
 
-    def chunk_stats(self, tid: str) -> dict[str, dict[str, int]]:
+    def chunk_stats(self, tid: str, top_level_only: bool = False) -> dict[str, dict[str, int]]:
+        # 拆分重试的子块编号为负数；进度只按顶层块计，避免超过总数
+        where = " AND chunk_index>=0" if top_level_only else ""
         with self.connect() as db:
-            rows = db.execute("""SELECT kind,status,COUNT(*) AS count,
+            rows = db.execute(f"""SELECT kind,status,COUNT(*) AS count,
                 COALESCE(SUM(CAST(json_extract(usage,'$.input_tokens') AS INTEGER)),0) AS input_tokens,
                 COALESCE(SUM(CAST(json_extract(usage,'$.output_tokens') AS INTEGER)),0) AS output_tokens
-                FROM chunks WHERE task_id=? GROUP BY kind,status""", (tid,)).fetchall()
+                FROM chunks WHERE task_id=?{where} GROUP BY kind,status""", (tid,)).fetchall()
         return {f"{r['kind']}:{r['status']}": dict(r) for r in rows}
 
     def completed_chunks(self, tid: str) -> set[tuple[str, str, int]]:

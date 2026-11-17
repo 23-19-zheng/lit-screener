@@ -39,6 +39,8 @@ def criteria_from_dict(data: dict) -> tuple[CriteriaPack, list[Criterion]]:
                 for c in data.get("criteria") or []]
     if not criteria or len({c.id for c in criteria}) != len(criteria):
         raise ValueError("至少需要一个判据，且判据 ID 不能重复")
+    if any(not c.id or not c.question for c in criteria):
+        raise ValueError("判据 ID 和判定问题不能为空")
     pack = CriteriaPack(pack=data.get("pack", "custom"), description=data.get("description", ""),
                         criteria=criteria, domain=data.get("domain") or "相关领域")
     return pack, criteria
@@ -180,6 +182,15 @@ def make_batch_agent(spec: dict):
     return BatchMockAgent(spec) if spec.get("provider") == "mock" else make_agent(spec)
 
 
+_SUB_BASE = 2 ** 32
+
+
+def _sub_index(index: int, offset: int) -> int:
+    """拆分子块编号：顶层块为非负数，子块为负数；同一顶层块内按二叉堆序编号，互不冲突。"""
+    top, node = (index, 1) if index >= 0 else divmod(-index, _SUB_BASE)
+    return -(top * _SUB_BASE + node * 2 + offset)
+
+
 @dataclass
 class BatchScreener:
     pack: CriteriaPack
@@ -250,7 +261,7 @@ class BatchScreener:
         half = len(chunk) // 2
         merged = {}
         for offset, part in enumerate((chunk[:half], chunk[half:])):
-            merged.update(self._call(kind, reviewer, index * 100 + offset + 1,
+            merged.update(self._call(kind, reviewer, _sub_index(index, offset),
                                      part, agent, saved, reviews))
         if len(merged) == len(chunk) and self.on_result:
             self.on_result(kind, reviewer, index, {

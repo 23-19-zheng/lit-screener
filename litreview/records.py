@@ -81,10 +81,16 @@ def dedupe(records: list[Record]) -> list[Record]:
             i = parent[i]
         return i
 
-    def union(i: int, j: int):
+    # 每个分组已知的 DOI；仅凭标题合并时，两组 DOI 不同说明是不同文献（如同名 Editorial）
+    dois = [{r.doi.strip().lower()} if r.doi.strip() else set() for r in records]
+
+    def union(i: int, j: int, by_title: bool = False):
         a, b = find(i), find(j)
-        if a != b:
-            parent[max(a, b)] = min(a, b)
+        if a == b or (by_title and dois[a] and dois[b] and dois[a] != dois[b]):
+            return
+        lo, hi = min(a, b), max(a, b)
+        parent[hi] = lo
+        dois[lo] |= dois[hi]
 
     seen: dict[tuple[str, str], int] = {}
     for i, r in enumerate(records):
@@ -97,7 +103,7 @@ def dedupe(records: list[Record]) -> list[Record]:
             keys.append(("title", _norm_title(r.title)))
         for key in keys:
             if key in seen:
-                union(i, seen[key])
+                union(i, seen[key], by_title=key[0] == "title")
             else:
                 seen[key] = i
 
@@ -200,20 +206,22 @@ def load_ris(path: str) -> list[Record]:
     def flush():
         if not cur:
             return
-        title = (cur.get("TI") or cur.get("T2") or [""])[0]
-        year = (cur.get("PY", [""])[0]).strip()
+        # T1 是 EndNote 等工具的主标题；T2 是期刊/书名，不能当标题
+        title = (cur.get("TI") or cur.get("T1") or [""])[0]
+        y1 = (cur.get("Y1", [""])[0]).strip()
+        year = (cur.get("PY", [""])[0]).strip() or y1[:4]
         external_id = (cur.get("AN", [""])[0]).strip()
         records.append(Record(
             id=external_id or f"ris-{len(records)+1}",
             title=title,
-            abstract=" ".join(cur.get("AB", [])),
+            abstract=" ".join(cur.get("AB") or cur.get("N2") or []),
             authors="; ".join(cur.get("AU", [])),
             year=year,
             doi=(cur.get("DO", [""])[0]).strip(),
             source="ris",
             language=norm_language((cur.get("LA", [""])[0])),
             doctype=(cur.get("TY", [""])[0]).strip(),
-            date=_norm_date((cur.get("DA", [""])[0]), year),
+            date=_norm_date((cur.get("DA", [""])[0]) or y1, year),
             external_id=external_id,
         ))
 
