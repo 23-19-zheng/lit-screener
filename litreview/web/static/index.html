@@ -17,13 +17,13 @@
 </aside>
 <main>
   <header><div><p class="eyebrow">RESEARCH, WITH EVIDENCE</p><h1 id="page-title">筛选工作台</h1></div><div class="header-meta"><span class="local-badge">本地运行</span><button id="resume-draft" class="secondary hidden">继续上次配置</button><button id="help-btn" class="icon-btn" title="使用说明">?</button></div></header>
-  <div id="notice" class="notice hidden"></div>
+  <div id="notice" class="notice" popover="manual" role="status" aria-live="polite" title="点击关闭"></div>
 
   <section id="view-workspace" class="view">
     <div class="stepper"><div class="step active" data-step="1"><b>1</b><span>数据集<small>上传完整题录</small></span></div><i></i><div class="step" data-step="2"><b>2</b><span>筛选配置<small>判据、模型与知识</small></span></div><i></i><div class="step" data-step="3"><b>3</b><span>启动任务<small>检查并运行</small></span></div></div>
 
     <section id="step-1" class="step-panel">
-      <div class="section-heading"><div><h2>选择你的文献数据集</h2><p>一次选择一个文件或同格式的多个分卷，系统自动合并、去重并生成预览。</p></div><div><span class="tag">RIS · WoS TXT · CSV</span><select id="dataset-list" style="width:auto;margin-left:12px;padding:5px;max-width:310px"><option value="">选择已上传的数据集</option></select></div></div>
+      <div class="section-heading"><div><h2>选择你的文献数据集</h2><p>一次选择一个文件或同格式的多个分卷，系统自动合并、去重并生成预览。</p></div><div><span class="tag">RIS · WoS TXT · CSV</span><select id="dataset-list" style="width:auto;margin-left:12px;padding:5px;max-width:310px"><option value="">选择已上传的数据集</option></select><button id="delete-dataset" class="text-btn hidden" title="删除所选数据集">删除</button></div></div>
       <label id="dropzone" class="dropzone"><input id="file-input" type="file" multiple accept=".ris,.txt,.csv"><span class="upload-symbol">↑</span><strong>拖入文件，或点击选择</strong><span>同一批 RIS / TXT 分卷可一次全选 · 总大小不超过 200 MB</span></label>
       <div id="upload-list" class="upload-list"></div>
       <div id="dataset-summary" class="hidden">
@@ -37,7 +37,7 @@
       <div id="criteria-step">
       <div class="config-grid">
         <div>
-          <div class="panel"><div class="panel-title"><h3>筛选判据</h3><div><button id="import-criteria" class="text-btn">导入 YAML</button><button id="save-draft" class="text-btn">保存待运行配置</button><button id="save-preset" class="text-btn">保存方案</button><select id="preset-list" style="width:auto;padding:4px"><option value="">已存方案</option></select></div></div>
+          <div class="panel"><div class="panel-title"><h3>筛选判据</h3><div class="toolbar"><select id="criteria-source" class="compact-select" aria-label="载入判据" title="从主题包、已存方案或 YAML 文件载入判据"><option value="">载入判据…</option></select><details class="menu"><summary class="text-btn">保存 ▾</summary><div class="menu-list"><button id="save-preset" class="menu-item">保存为方案</button><button id="save-draft" class="menu-item">保存待运行配置</button><button id="manage-presets" class="menu-item">管理已存方案…</button></div></details></div></div>
             <input id="criteria-file" type="file" accept=".yaml,.yml" class="hidden">
             <div class="form-row"><label>研究领域<input id="domain" placeholder="例如：稀土冶金与材料"></label><label>判据组合<select id="logic"><option value="all">全部满足（all）</option><option value="any">任一满足（any）</option></select></label></div>
             <div id="criteria-list"></div><button id="add-criterion" class="secondary full">＋ 添加判据</button>
@@ -64,11 +64,13 @@
 
   </section>
 
-  <section id="view-tasks" class="view hidden"><div class="section-heading"><div><h2>任务与结果</h2><p>所有分块即时保存，任务状态自动刷新。</p></div><button id="refresh-tasks" class="secondary">刷新</button></div><div id="task-list" class="task-list"></div></section>
+  <section id="view-tasks" class="view hidden"><div class="section-heading"><div><h2>任务与结果</h2><p>所有分块即时保存，任务状态自动刷新。</p></div><div class="toolbar"><input id="task-search" type="search" placeholder="搜索任务名或 ID" aria-label="搜索任务"><select id="task-filter" class="compact-select" aria-label="按状态筛选"><option value="">全部状态</option><option value="active">进行中</option><option value="completed">已完成</option><option value="failed">失败</option><option value="stopped">已取消 / 待恢复</option></select><button id="refresh-tasks" class="secondary">刷新</button></div></div><div id="task-list" class="task-list"></div></section>
   <section id="view-compare" class="view hidden"><div class="section-heading"><div><h2>探索评审配置</h2><p>选择相同数据集与判据下的已完成任务，比较成本、效率和一致性。</p></div><button id="run-compare" class="primary" disabled>对比所选任务</button></div><div id="compare-select" class="panel"></div><div id="compare-result"></div><div class="callout">模型之间更一致，不等于筛选更准确。要判断最佳配置，请在任务详情上传人工金标准，比较 P / R / F1。</div></section>
 </main>
 <dialog id="detail-dialog"><div class="dialog-header"><div><p class="eyebrow">RUN DETAILS</p><h2 id="detail-title"></h2></div><button class="icon-btn close-dialog">×</button></div><div id="detail-content"></div></dialog>
 <dialog id="audit-dialog" class="audit-dialog"><div class="dialog-header"><div><p class="eyebrow">HUMAN-READABLE AUDIT</p><h2 id="audit-title"></h2></div><button class="icon-btn close-dialog">×</button></div><div id="audit-content"></div></dialog>
+<dialog id="ask-dialog" class="ask-dialog"><form method="dialog"><h3 id="ask-title"></h3><p id="ask-message" class="ask-message"></p><input id="ask-input" class="hidden" aria-label="输入"><div class="actions"><button id="ask-ok" value="ok" class="primary">确认</button><button value="cancel" class="secondary" formnovalidate>取消</button></div></form></dialog>
+<dialog id="presets-dialog" class="ask-dialog"><div class="dialog-header"><h2>已存方案</h2><button class="icon-btn close-dialog" aria-label="关闭">×</button></div><div id="presets-list"></div></dialog>
 <dialog id="help-dialog"><div class="dialog-header"><h2>快速使用</h2><button class="icon-btn close-dialog">×</button></div><ol class="help-list"><li><b>上传题录</b><p>可全选同格式的多个分卷；不要把相同文献的 RIS 和 TXT 同时上传。</p></li><li><b>写清判据</b><p>每条判据分别描述问题、纳入、排除和边界，判据组合决定整体结论。</p></li><li><b>先 Mock，后小样本</b><p>Mock 仅用于验证流程，不是真实筛选。真实模型在 .env 中配置密钥，页面不保存密钥。</p></li><li><b>全量运行与导出</b><p>评审员独立并行评审，完成后统一仲裁；可导出纳入文献和完整审计记录。</p></li></ol></dialog>
 <script src="/app.js?v=0.3.0"></script>
 <script src="/task-details.js?v=0.3.0"></script>

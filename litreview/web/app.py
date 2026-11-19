@@ -7,6 +7,8 @@ import io
 import json
 import os
 import re
+import shutil
+import tempfile
 import uuid
 from collections import Counter
 from pathlib import Path
@@ -18,16 +20,19 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from ..criteria import load_pack
 from ..evaluate import evaluate
 from ..records import assign_record_ids, dedupe, load_records
 from .audit import audit_rows, audit_summary, error_groups, render_html
 from .runner import TaskRunner
-from .store import ROOT, Store, UPLOADS, VAR, new_id
+from .store import ROOT, Store, UPLOADS, new_id
 
 load_dotenv(ROOT / ".env")
 store = Store()
 runner = TaskRunner(store)
 app = FastAPI(title="Lit Screener", version="0.2.0")
+DEFAULT_CONFIG = ROOT / ("config.yaml" if (ROOT / "config.yaml").exists() else "config.example.yaml")
+THEMES = ROOT / "themes"
 
 
 class TaskRequest(BaseModel):
@@ -57,19 +62,56 @@ def health():
     return {"ok": True}
 
 
+def _read_yaml(path: Path) -> dict:
+    with open(path, encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
+def _criteria_dict(crit_cfg: dict) -> dict:
+    """配置里的 criteria 段 → Web 端判据结构（路径相对仓库根目录）。"""
+    pack, selected = load_pack(str(ROOT / crit_cfg["pack"]), crit_cfg.get("active"))
+    return {"domain": pack.domain, "pack": pack.pack, "logic": crit_cfg.get("inclusion_logic", "all"),
+            "criteria": [{"id": c.id, "name": c.name, "question": c.question, "guidance": c.guidance}
+                         for c in selected]}
+
+
 @app.get("/api/defaults")
 def defaults():
-    with open(ROOT / "criteria/rare_earth.yaml", encoding="utf-8") as f:
-        criteria = yaml.safe_load(f)
-    return {"criteria": criteria, "mock_available": True,
-            "key_status": {"ARK_API_KEY": bool(os.environ.get("ARK_API_KEY"))},
-            "default_model": {"provider": "openai_compatible", "model": "deepseek-v4.1-flash",
-                              "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
-                              "api_key_env": "ARK_API_KEY", "temperature": 0}}
+    cfg = _read_yaml(DEFAULT_CONFIG)
+    spec = (cfg.get("agents") or {}).get("reviewer_1") or {}
+    model = {k: spec.get(k, "") for k in ("provider", "model", "base_url", "api_key_env")}
+    model["temperature"] = spec.get("temperature", 0)
+    return {"criteria": _criteria_dict(cfg["criteria"]), "mock_available": True,
+            "key_status": {model["api_key_env"]: bool(os.environ.get(model["api_key_env"]))},
+            "default_model": model}
 
 
+@app.get("/api/themes")
+def themes():
+    """themes/<name>/config.yaml 主题包；无效主题包带 error 返回，不静默丢弃。"""
+    out = []
+    for folder in sorted(p for p in THEMES.iterdir() if p.is_dir() and not p.name.startswith("_")):
+        if not (folder / "config.yaml").is_file():
+            continue
+        try:
+            cfg = _read_yaml(folder / "config.yaml")
+            knowledge_cfg = cfg.get("knowledge") or {}
+            kdir = ROOT / knowledge_cfg.get("dir", folder)
+            filters = cfg.get("filters") or {}
+            out.append({
+                "id": folder.name, "criteria": _criteria_dict(cfg["criteria"]),
+                "knowledge": "\n\n".join(p.read_text(encoding="utf-8") for p in sorted(kdir.glob("*.md"))),
+                "knowledge_top_k": knowledge_cfg.get("top_k", 4),
+                "require_abstract": (cfg.get("run") or {}).get("require_abstract", True),
+                "filters": {k: str(filters[k]) for k in ("language", "date_from", "date_to") if filters.get(k)}})
+        except (OSError, KeyError, TypeError, ValueError, yaml.YAMLError) as e:
+            out.append({"id": folder.name, "error": str(e)})
+    return out
+
+
+# 同步函数：FastAPI 放进线程池执行，解析大文件时不阻塞其他请求
 @app.post("/api/datasets")
-async def upload_dataset(files: list[UploadFile] = File(...)):
+def upload_dataset(files: list[UploadFile] = File(...)):
     if not files or len(files) > 30:
         raise HTTPException(400, "请选择 1–30 个同格式分卷")
     allowed = {".ris", ".txt", ".csv"}
@@ -84,7 +126,7 @@ async def upload_dataset(files: list[UploadFile] = File(...)):
             name = Path(upload.filename or "records").name
             if not re.search(r"\.(ris|txt|csv)$", name, re.I):
                 raise ValueError("不支持的文件扩展名")
-            data = await upload.read(64 * 1024 * 1024 + 1)
+            data = upload.file.read(64 * 1024 * 1024 + 1)
             if len(data) > 64 * 1024 * 1024:
                 raise ValueError(f"文件 {name} 超过 64MB 限制")
             total += len(data)
@@ -110,11 +152,24 @@ async def upload_dataset(files: list[UploadFile] = File(...)):
                 "preview": [r.to_dict() for r in records[:8]]}
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
+    finally:
+        shutil.rmtree(upload_dir, ignore_errors=True)  # 题录已入库，原始分卷不再需要
 
 
 @app.get("/api/datasets")
 def datasets():
     return store.list_datasets()
+
+
+@app.delete("/api/datasets/{did}")
+def delete_dataset(did: str):
+    if not store.get_dataset(did, include_records=False):
+        raise HTTPException(404, "数据集不存在")
+    used = store.count_tasks_using(did)
+    if used:
+        raise HTTPException(409, f"仍有 {used} 个任务使用该数据集，请先删除这些任务")
+    store.delete_dataset(did)
+    return {"ok": True}
 
 
 @app.get("/api/datasets/{did}")
@@ -179,6 +234,26 @@ def task(tid: str):
     return task
 
 
+@app.get("/api/tasks/{tid}/status")
+def task_status(tid: str):
+    """轮询用的轻量接口：不读取结果、分块和审计汇总。"""
+    task = store.get_task(tid)
+    if not task:
+        raise HTTPException(404, "任务不存在")
+    return {k: task[k] for k in ("id", "status", "phase", "progress", "total", "error")}
+
+
+@app.delete("/api/tasks/{tid}")
+def delete_task(tid: str):
+    task = store.get_task(tid)
+    if not task:
+        raise HTTPException(404, "任务不存在")
+    if task["status"] in {"running", "pending", "cancelling"}:
+        raise HTTPException(409, "任务正在运行，请先取消")
+    store.delete_task(tid)
+    return {"ok": True}
+
+
 @app.post("/api/tasks/{tid}/cancel")
 def cancel(tid: str):
     task = store.get_task(tid)
@@ -233,10 +308,7 @@ def arbitration_retry(tid: str):
     pending = sum(t.get("path") == "arbitration_error" for t in store.get_results(tid))
     if not pending:
         raise HTTPException(400, "没有需要补跑仲裁的文献")
-    arbiter = (task["config"].get("arbiter") or {}).copy()
-    if arbiter.get("model") == "Kimi-K3.1-Pro":
-        arbiter["temperature"] = 1
-    store.update_task(tid, config={**task["config"], "arbiter": arbiter})
+    arbiter = task["config"].get("arbiter") or {}
     store.update_task(tid, status="pending", phase="arbitration_pending",
                       error="", metrics={**task["metrics"], "resume_arbitration_only": True})
     runner.start(tid, resume_arbitration=True, arbiter_override=arbiter)
@@ -330,23 +402,22 @@ def compare(ids: str):
 
 
 @app.post("/api/tasks/{tid}/evaluate")
-async def evaluate_task(tid: str, labels: UploadFile = File(...)):
+def evaluate_task(tid: str, labels: UploadFile = File(...)):
     if not store.get_task(tid):
         raise HTTPException(404, "任务不存在")
-    folder = VAR / "evaluation"
-    folder.mkdir(parents=True, exist_ok=True)
     suffix = Path(labels.filename or "").suffix.lower()
     if suffix != ".csv":
         raise HTTPException(400, "金标准须为 CSV")
-    label_path = folder / f"{tid}_{uuid.uuid4().hex}.csv"
-    trace_path = folder / f"{tid}_{uuid.uuid4().hex}.jsonl"
-    label_path.write_bytes(await labels.read(10 * 1024 * 1024))
-    trace_path.write_text("\n".join(json.dumps(t, ensure_ascii=False) for t in store.get_results(tid)),
-                          encoding="utf-8")
-    try:
-        return evaluate(str(trace_path), str(label_path))
-    except (ValueError, OSError) as e:
-        raise HTTPException(400, str(e)) from e
+    with tempfile.TemporaryDirectory() as folder:  # 评估中间文件用完即删
+        label_path = Path(folder) / "labels.csv"
+        trace_path = Path(folder) / "trace.jsonl"
+        label_path.write_bytes(labels.file.read(10 * 1024 * 1024))
+        trace_path.write_text("\n".join(json.dumps(t, ensure_ascii=False) for t in store.get_results(tid)),
+                              encoding="utf-8")
+        try:
+            return evaluate(str(trace_path), str(label_path))
+        except (ValueError, OSError) as e:
+            raise HTTPException(400, str(e)) from e
 
 
 @app.get("/api/draft")
@@ -386,9 +457,9 @@ def delete_preset(pid: str):
 
 
 @app.post("/api/presets/import")
-async def import_preset(file: UploadFile = File(...)):
+def import_preset(file: UploadFile = File(...)):
     try:
-        content = yaml.safe_load((await file.read(2 * 1024 * 1024)).decode("utf-8-sig"))
+        content = yaml.safe_load(file.file.read(2 * 1024 * 1024).decode("utf-8-sig"))
         if not isinstance(content, dict) or not content.get("criteria"):
             raise ValueError("YAML 中没有 criteria")
         return content

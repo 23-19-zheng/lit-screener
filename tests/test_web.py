@@ -15,7 +15,7 @@ def isolated_store(tmp_path, monkeypatch):
     monkeypatch.setattr(web_module, "store", fresh)
     runner = TaskRunner(fresh)
     monkeypatch.setattr(web_module, "runner", runner)
-    monkeypatch.setattr(fresh, "UPLOADS", tmp_path / "uploads", raising=False)
+    monkeypatch.setattr(web_module, "UPLOADS", tmp_path / "uploads")  # 不写入真实 var/uploads
     yield fresh
     for task in fresh.list_tasks():
         runner.cancel(task["id"])
@@ -215,3 +215,128 @@ def test_resume_arbitration_progress_keeps_resume_only_flag(isolated_store, monk
     monkeypatch.setattr(store, "update_task", spy)
     TaskRunner(store).resume_arbitration(tid)
     assert flags and all(flags)
+
+
+def test_status_endpoint_is_lightweight(isolated_store, monkeypatch):
+    tid = _mock_task(isolated_store, "completed")
+    with TestClient(app) as client:
+        monkeypatch.setattr(isolated_store, "get_results", lambda *a: pytest.fail("轮询不应读取全部结果"))
+        isolated_store.update_task(tid, status="running", phase="reviewing", progress=3, total=7)
+        body = client.get(f"/api/tasks/{tid}/status").json()
+    assert body == {"id": tid, "status": "running", "phase": "reviewing", "progress": 3, "total": 7, "error": ""}
+
+
+def test_upload_parsing_does_not_block_event_loop(isolated_store, monkeypatch):
+    import threading
+    started, release = threading.Event(), threading.Event()
+    def slow_load(path):
+        started.set()
+        release.wait(5)
+        return []
+    monkeypatch.setattr(web_module, "load_records", slow_load)
+    with TestClient(app) as client:
+        t = threading.Thread(target=lambda: client.post("/api/datasets", files=[("files", ("a.ris", "x", "text/plain"))]))
+        t.start()
+        assert started.wait(5)
+        health = {}
+        h = threading.Thread(target=lambda: health.update(r=client.get("/api/health")))
+        h.start()
+        h.join(2)
+        release.set()
+        t.join(5)
+        assert "r" in health, "解析上传文件时整个服务被阻塞"
+
+
+def test_upload_does_not_keep_raw_files(isolated_store, tmp_path, monkeypatch):
+    monkeypatch.setattr(web_module, "UPLOADS", tmp_path / "uploads")
+    ris = "TY  - JOUR\nTI  - A\nAB  - B\nPY  - 2025\nER  -\n"
+    with TestClient(app) as client:
+        assert client.post("/api/datasets", files=[("files", ("a.ris", ris, "text/plain"))]).status_code == 200
+        assert client.post("/api/datasets", files=[("files", ("b.ris", "garbage", "text/plain"))]).status_code == 400
+    assert not any((tmp_path / "uploads").rglob("*.*"))  # 解析完即删除，数据已在数据库
+
+
+def test_delete_task_removes_all_rows(isolated_store):
+    tid = _mock_task(isolated_store, "completed")
+    isolated_store.save_chunk(tid, "review", "reviewer_1", 0, "done", ["WOS:1"], {}, {})
+    isolated_store.save_results(tid, {"WOS:1": {"path": "consistent"}})
+    isolated_store.add_recovery(tid, "arbitration_only", {}, [], "completed", {})
+    with TestClient(app) as client:
+        assert client.delete(f"/api/tasks/{tid}").status_code == 200
+        assert client.get(f"/api/tasks/{tid}").status_code == 404
+    assert not isolated_store.get_chunks(tid) and not isolated_store.get_results(tid)
+    assert not isolated_store.get_recoveries(tid)
+
+
+def test_delete_running_task_is_rejected(isolated_store):
+    with TestClient(app) as client:
+        tid = _mock_task(isolated_store, "running")
+        assert client.delete(f"/api/tasks/{tid}").status_code == 409
+
+
+def test_delete_dataset_only_when_unreferenced(isolated_store):
+    tid = _mock_task(isolated_store, "completed")
+    did = isolated_store.get_task(tid)["dataset_id"]
+    with TestClient(app) as client:
+        assert client.delete(f"/api/datasets/{did}").status_code == 409  # 任务克隆/重跑仍依赖它
+        client.delete(f"/api/tasks/{tid}")
+        assert client.delete(f"/api/datasets/{did}").status_code == 200
+        assert client.get(f"/api/datasets/{did}").status_code == 404
+
+
+def test_resume_arbitration_does_not_rescan_chunks_per_record(isolated_store, monkeypatch):
+    store = isolated_store
+    tid = _mock_task(store, "pending")
+    base = store.get_dataset(store.get_task(tid)["dataset_id"])["records"][0]
+    reviews = {f"reviewer_{n}": {"overall": n == 1, "answers": {"T1": n == 1}, "reasonings": {}} for n in (1, 2)}
+    store.save_results(tid, {f"WOS:{i}": {"record": {**base, "id": f"WOS:{i}"}, "criteria": ["T1"],
+                                          "reviews": reviews, "path": "arbitration_error",
+                                          "final_overall": None, "final_answers": {}, "human_review": True}
+                             for i in range(20)})
+    cfg = store.get_task(tid)["config"]
+    cfg["reviewers"].append({"provider": "mock", "name": "reviewer_2", "role": "reviewer_2"})
+    cfg["arbiter"] = {"provider": "mock", "name": "arbiter", "role": "arbiter", "model": "m"}
+    store.update_task(tid, config=cfg)
+    scans = []
+    for name in ("get_chunks", "usage"):
+        real = getattr(store, name)
+        monkeypatch.setattr(store, name, lambda *a, _r=real, _n=name, **k: scans.append(_n) or _r(*a, **k))
+    TaskRunner(store).resume_arbitration(tid)
+    assert store.get_task(tid)["status"] == "completed"
+    assert len(scans) <= 4  # 与篇数无关，而不是每篇全表扫描一次
+
+
+def test_themes_endpoint_lists_theme_packages(isolated_store):
+    with TestClient(app) as client:
+        themes = client.get("/api/themes").json()
+    anammox = next(t for t in themes if t["id"] == "anammox")
+    assert "_template" not in {t["id"] for t in themes}
+    assert [c["id"] for c in anammox["criteria"]["criteria"]] == ["A1", "A2", "A3", "A4", "A5"]
+    assert anammox["criteria"]["logic"] == "all" and anammox["criteria"]["domain"]
+    assert "## " in anammox["knowledge"]
+    assert anammox["filters"]["language"] == "en"
+
+
+def test_defaults_come_from_config_not_hardcoded(isolated_store, monkeypatch, tmp_path):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("criteria:\n  pack: themes/anammox/criteria.yaml\n  inclusion_logic: any\n"
+                   "agents:\n  reviewer_1:\n    provider: openai_compatible\n    model: my-model\n"
+                   "    base_url: http://x\n    api_key_env: MY_KEY\n", encoding="utf-8")
+    monkeypatch.setattr(web_module, "DEFAULT_CONFIG", cfg)
+    with TestClient(app) as client:
+        d = client.get("/api/defaults").json()
+    assert d["criteria"]["criteria"][0]["id"] == "A1" and d["criteria"]["logic"] == "any"
+    assert d["default_model"]["model"] == "my-model" and d["default_model"]["api_key_env"] == "MY_KEY"
+
+
+def test_arbitration_retry_uses_configured_temperature(isolated_store, monkeypatch):
+    tid = _mock_task(isolated_store, "completed")
+    cfg = isolated_store.get_task(tid)["config"]
+    cfg["arbiter"] = {"provider": "mock", "name": "arbiter", "model": "Kimi-K3.1-Pro", "temperature": 0.3}
+    isolated_store.update_task(tid, config=cfg)
+    isolated_store.save_results(tid, {"WOS:1": {"path": "arbitration_error"}})
+    started = {}
+    with TestClient(app) as client:
+        monkeypatch.setattr(web_module.runner, "start", lambda t, **k: started.update(k))
+        assert client.post(f"/api/tasks/{tid}/arbitration-retry").status_code == 200
+    assert started["arbiter_override"]["temperature"] == 0.3  # 不再按模型名特判

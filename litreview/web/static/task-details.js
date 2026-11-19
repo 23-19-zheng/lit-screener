@@ -25,7 +25,7 @@ async function openTask(tid,decision='',offset=0){
     const live=['pending','running','cancelling'].includes(task.status)?`<p class="task-live-progress help">${labels[task.phase]||task.phase} · ${task.progress}/${task.total||'—'} 分块</p>`:'';
     const failed=(task.audit?.arbitration_failed||0)>0;
     const arb=task.config.arbiter||{};
-    const retryTemperature=arb.model==='Kimi-K3.1-Pro'?1:(arb.temperature??'默认');
+    const retryTemperature=arb.temperature??'默认';
     $('#detail-content').innerHTML=`${task.error?`<div class="notice error">${esc(task.error)}</div>`:''}${live}${taskMetrics(task)}
       <div class="result-tabs"><button id="open-audit" class="primary">人工审计中心</button><a class="secondary" target="_blank" href="/api/tasks/${tid}/audit.html">离线 HTML 报告</a><a class="text-btn" href="/api/tasks/${tid}/export/trace">原始 JSONL</a></div>
       ${failed?`<div class="recovery-card"><h3>有 ${task.audit.arbitration_failed} 篇文献仲裁失败</h3><p>两位主评审结果都保留，无需重新评审。补跑将使用 ${esc(arb.model)}，temperature=${retryTemperature}。</p><button id="retry-arbitration" class="primary">仅补跑 ${task.audit.arbitration_failed} 篇失败仲裁</button><small>会调用真实模型；需再次确认。不会重跑一致文献。</small></div>`:''}
@@ -49,7 +49,7 @@ async function openTask(tid,decision='',offset=0){
 async function confirmArbitrationRetry(task){
   const count=task.audit.arbitration_failed;
   const arb=task.config.arbiter;
-  if(!confirm(`仅补跑 ${count} 篇仲裁失败文献？\n\n模型：${arb.model}\ntemperature：${arb.model==='Kimi-K3.1-Pro'?1:(arb.temperature??'默认')}\n不会重新调用两位主评审，真实模型调用会产生费用。`))return;
+  if(!await ask({title:`仅补跑 ${count} 篇仲裁失败文献？`,message:`模型：${arb.model}\ntemperature：${arb.temperature??'默认'}\n不会重新调用主评审；真实模型调用会产生费用。`,okText:'开始补跑'}))return;
   try{await api(`/api/tasks/${task.id}/arbitration-retry`,{method:'POST'});notify('仅补仲裁任务已启动，可刷新查看进度。');openTask(task.id);}catch(e){notify(e.message,true);}
 }
 

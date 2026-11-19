@@ -125,8 +125,12 @@ class TaskRunner:
             self.store.update_task(tid, total=len(targets))
             agent = make_batch_agent(arbiter)
             lock = threading.Lock()
+            # 进度与用量在内存累加，避免每篇都全表扫描分块（O(n²)）
+            done_count = 0
+            totals = self.store.usage(tid)
 
             def work(job):
+                nonlocal done_count
                 index, chunk = job
                 record = chunk[0]
                 if tid in self.cancelled:
@@ -158,11 +162,15 @@ class TaskRunner:
                             "human_review": out["overall"] is None,
                             "review_reason": "评审分歧，已仲裁" if out["overall"] is not None else "仲裁失败/无法判定",
                             "knowledge_used": knowledge}})
-                    done = len([c for c in self.store.get_chunks(tid, include_outputs=False)
-                                if c["reviewer"] == chunk_reviewer and c["status"] == "done"])
+                    if result["status"] == "done":
+                        done_count += 1
+                        totals["requests"] += 1
+                        totals["input_tokens"] += int(result["usage"].get("input_tokens") or 0)
+                        totals["output_tokens"] += int(result["usage"].get("output_tokens") or 0)
+                    else:
+                        totals["failed_requests"] += 1
                     # 合并而非覆盖 metrics：保留 resume_arbitration_only，崩溃重启后仍只补仲裁
-                    self.store.update_task(tid, progress=done, metrics={
-                        **task["metrics"], **self.store.usage(tid)})
+                    self.store.update_task(tid, progress=done_count, metrics={**task["metrics"], **totals})
                 return result["outputs"]
 
             from concurrent.futures import ThreadPoolExecutor

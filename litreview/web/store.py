@@ -97,6 +97,15 @@ class Store:
             rows = db.execute("SELECT id,name,files,stats,created_at FROM datasets ORDER BY created_at DESC").fetchall()
         return [{**dict(r), "files": json.loads(r["files"]), "stats": json.loads(r["stats"])} for r in rows]
 
+    def count_tasks_using(self, did: str) -> int:
+        with self.connect() as db:
+            return db.execute("SELECT COUNT(*) FROM tasks WHERE dataset_id=?", (did,)).fetchone()[0]
+
+    def delete_dataset(self, did: str):
+        with self.connect() as db:
+            db.execute("DELETE FROM datasets WHERE id=?", (did,))
+            db.execute("DELETE FROM drafts WHERE dataset_id=?", (did,))  # 草稿已无法恢复
+
     def create_task(self, name: str, dataset_id: str, config: dict, knowledge: str = "") -> str:
         tid = new_id("run")
         with self.connect() as db:
@@ -118,6 +127,12 @@ class Store:
         with self.connect() as db:
             ids = [r[0] for r in db.execute("SELECT id FROM tasks ORDER BY created_at DESC").fetchall()]
         return [self.get_task(tid) for tid in ids]
+
+    def delete_task(self, tid: str):
+        with self.lock, self.connect() as db:
+            for table in ("chunks", "results", "recovery_history"):
+                db.execute(f"DELETE FROM {table} WHERE task_id=?", (tid,))
+            db.execute("DELETE FROM tasks WHERE id=?", (tid,))
 
     def update_task(self, tid: str, **fields):
         allowed = {"status", "phase", "progress", "total", "error", "metrics", "name", "config"}
